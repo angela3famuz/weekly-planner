@@ -85,6 +85,7 @@ one-time export/import is the only bridge).
 | `sw.js` | Service worker. Network-first for the page, cache-first for icons. |
 | `icons/` | Generated PNGs. iOS only accepts PNG for `apple-touch-icon`. |
 | `tools/make-icons.js` | Regenerates `icons/` — dependency-free rasterizer. |
+| `docs/sync-design.md` | Proposal for cross-device sync. Nothing built yet. |
 
 ## Regenerating the icons
 
