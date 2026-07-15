@@ -471,9 +471,43 @@
     padding: var(--s4) var(--s4) calc(var(--s4) + var(--safe-b));
     box-shadow: 0 -8px 30px rgba(0,0,0,.25); max-height: 92vh; overflow: auto;
   }
-  .modal h2 { font-size: 18px; margin-bottom: var(--s2); }
+  .modal h2 { font-size: 18px; margin-bottom: var(--s3); }
   .modal p { font-size: 14px; color: var(--ink-2); margin-bottom: var(--s2); line-height: 1.55; }
   .modal p b { color: var(--ink); }
+
+  /* Numbered steps with the action attached to each one */
+  .steps { list-style: none; counter-reset: step; }
+  .steps li {
+    position: relative; counter-increment: step;
+    padding: 0 0 var(--s3) 30px; margin-bottom: var(--s3);
+    border-bottom: 1px dashed var(--line);
+  }
+  .steps li:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .steps li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 0;
+    width: 21px; height: 21px; border-radius: 50%;
+    background: var(--teal); color: var(--ink);
+    font-size: 12px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step-text { display: block; font-size: 14px; color: var(--ink-2); line-height: 1.5; margin-bottom: var(--s2); }
+  .step-btn { width: 100%; }
+  .step-btn.ok { background: var(--teal); }
+  .steps textarea { margin-top: var(--s2); }
+  .cat-row { display: flex; align-items: center; gap: var(--s2); font-size: 14px; font-weight: 700; flex-wrap: wrap; }
+  .cat-row select {
+    font-weight: 700; font-size: 14px; padding: var(--s2); border-radius: var(--r-sm);
+    border: 1.5px solid #cfc8ba; background: #fff; min-height: 38px; flex: 1; min-width: 120px;
+  }
+  .import-note {
+    font-size: 13px; color: var(--ink-2); margin-top: var(--s2);
+    background: var(--yellow-soft); border-radius: var(--r-sm); padding: var(--s2) var(--s3); line-height: 1.5;
+  }
+  .prev-overnight {
+    font-size: 10px; font-weight: 800; letter-spacing: .5px; white-space: nowrap;
+    background: var(--purple); border-radius: 4px; padding: 2px 5px;
+  }
   .modal textarea {
     border: 1.5px dashed #cfc8ba; border-radius: var(--r-sm); padding: var(--s2);
     font-size: 13px; font-family: Consolas, monospace; min-height: 84px; background: #fff; resize: vertical;
@@ -493,6 +527,7 @@
   .prev-item {
     display: flex; gap: var(--s2); align-items: center; padding: var(--s2) var(--s1);
     border-bottom: 1px dashed var(--line); font-size: 14px; min-height: var(--tap);
+    flex-wrap: wrap; row-gap: var(--s1);
   }
   .prev-item input[type="checkbox"] { flex: none; width: 22px; height: 22px; accent-color: #6fbf82; }
   .prev-date { font-weight: 700; white-space: nowrap; min-width: 74px; }
@@ -500,7 +535,9 @@
     background: var(--sunken); border-radius: 4px; padding: 2px var(--s2);
     font-size: 11px; font-weight: 700; color: var(--ink-2); white-space: nowrap;
   }
-  .prev-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Given less than 90px the label drops to its own line rather than
+     ellipsing away to "Bar cl…". */
+  .prev-label { flex: 1 1 90px; min-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .prev-dup { color: var(--red); font-size: 11px; font-weight: 700; white-space: nowrap; }
   .prev-week {
     font-size: 11px; font-weight: 800; color: var(--ink-2); margin: var(--s3) 0 2px;
@@ -680,17 +717,31 @@
 <div class="overlay" id="importOverlay">
   <div class="modal">
     <h2>&#128247; Import shifts from a photo</h2>
-    <p><b>Step 1:</b> Send a photo of your work schedule to Claude in the chat and ask for an <b>import code</b>.<br>
-       <b>Step 2:</b> Paste the code below and hit Preview.<br>
-       <b>Step 3:</b> Tick the shifts you want, then add them to your schedule.</p>
-    <textarea id="importCode" placeholder='{"shifts":[{"date":"2026-07-16","start":"9:00","end":"17:30","label":"Work"}]}'></textarea>
-    <p style="margin-top:10px;margin-bottom:0">Add these shifts as: <select id="importCat" style="font-family:inherit;font-size:13px;font-weight:700;padding:3px 6px;border-radius:6px;border:1px solid #cfc8ba;background:#fff"></select></p>
+
+    <ol class="steps">
+      <li>
+        <span class="step-text">Copy the prompt, then send it to Claude with a photo of your schedule.</span>
+        <button class="btn step-btn" id="copyPromptBtn">Copy prompt for Claude</button>
+      </li>
+      <li>
+        <span class="step-text">Paste Claude's reply here — a code block is fine.</span>
+        <button class="btn step-btn" id="pasteBtn">Paste</button>
+        <textarea id="importCode" placeholder='Paste Claude&apos;s reply…'></textarea>
+      </li>
+      <li>
+        <span class="step-text">Check what landed, then add it.</span>
+        <label class="cat-row">Add these shifts as
+          <select id="importCat"></select>
+        </label>
+      </li>
+    </ol>
+
     <div class="import-error" id="importError" style="display:none"></div>
+    <div class="import-note" id="importNote" style="display:none"></div>
     <div class="prev-list" id="importPreview"></div>
     <div class="import-success" id="importSuccess" style="display:none"></div>
     <div class="modal-btns">
       <button class="btn" id="importCancel">Close</button>
-      <button class="btn" id="importPreviewBtn">Preview</button>
       <button class="btn primary" id="importAddBtn" disabled>Add selected</button>
     </div>
   </div>
@@ -752,7 +803,9 @@
   }
   function fmt(d) { return (d.getMonth() + 1) + '/' + d.getDate(); }
   function fmtTime(min) {
-    var h = Math.floor(min / 60), m = min % 60;
+    // Wrap so end-of-day (1440) reads as 12am, not 12pm.
+    var t = ((min % 1440) + 1440) % 1440;
+    var h = Math.floor(t / 60), m = t % 60;
     var ap = h >= 12 ? 'pm' : 'am';
     var h12 = h % 12; if (h12 === 0) h12 = 12;
     return h12 + (m ? ':' + String(m).padStart(2, '0') : '') + ap;
@@ -1348,7 +1401,10 @@
 
   function parseTimeStr(s) {
     if (typeof s === 'number') return s; // already minutes
-    var m = String(s).trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+    var t = String(s).trim().toLowerCase().replace(/\s+/g, '');
+    t = t.replace(/([ap])\.m\.?/g, '$1m');     // "5 p.m." -> "5pm"
+    t = t.replace(/(\d)\.(\d{2})/, '$1:$2');   // "5.30pm" -> "5:30pm"
+    var m = t.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)?$/);
     if (!m) return null;
     var h = parseInt(m[1], 10), min = m[2] ? parseInt(m[2], 10) : 0;
     if (m[3] === 'pm' && h !== 12) h += 12;
@@ -1357,30 +1413,110 @@
     return h * 60 + min;
   }
 
+  /* --- Tolerant reading of whatever gets pasted -----------------------------
+     Claude replies in a fenced code block by default, phone keyboards turn
+     quotes curly, and people paste the surrounding sentence too. Bare
+     JSON.parse rejects all of that, so normalise first. */
+
+  function normalizeImportText(text) {
+    var t = String(text == null ? '' : text);
+    t = t.replace(/[“”„‟″]/g, '"');   // curly double quotes
+    t = t.replace(/[‘’‚‛′]/g, "'");   // curly single quotes
+    t = t.replace(/[–—]/g, '-');                      // en/em dashes
+    t = t.replace(/ /g, ' ');                              // non-breaking space
+    var fence = t.match(/```[a-zA-Z]*[ \t]*\r?\n?([\s\S]*?)```/); // prefer fenced contents
+    if (fence) t = fence[1];
+    return t.trim();
+  }
+
+  // Returns the first balanced {...} or [...] run, ignoring braces inside strings.
+  function sliceBalanced(t) {
+    var start = -1, open, close;
+    for (var i = 0; i < t.length; i++) {
+      if (t[i] === '{' || t[i] === '[') {
+        start = i; open = t[i]; close = t[i] === '{' ? '}' : ']';
+        break;
+      }
+    }
+    if (start < 0) return null;
+    var depth = 0, inStr = false, esc = false;
+    for (var j = start; j < t.length; j++) {
+      var c = t[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === open) depth++;
+      else if (c === close && --depth === 0) return t.slice(start, j + 1);
+    }
+    return null;
+  }
+
+  function parseJsonLoose(text) {
+    var t = normalizeImportText(text);
+    if (!t) return null;
+    var tries = [];
+    var sliced = sliceBalanced(t);
+    if (sliced) tries.push(sliced);
+    tries.push(t);
+    for (var i = 0; i < tries.length; i++) {
+      try { return JSON.parse(tries[i]); } catch (e) {}
+      // Only as a fallback: drop trailing commas before a closing brace/bracket.
+      try { return JSON.parse(tries[i].replace(/,\s*([}\]])/g, '$1')); } catch (e) {}
+    }
+    return null;
+  }
+
   function parseImport(text) {
     var errors = [], shifts = [];
-    var obj;
-    try { obj = JSON.parse(text); } catch (e) { return { errors: ['Could not read the code — make sure you pasted the whole thing.'], shifts: [] }; }
+    var obj = parseJsonLoose(text);
+    if (obj === null) {
+      return {
+        errors: [String(text || '').trim()
+          ? "That doesn't look like an import code. Paste Claude's whole reply — a code block, quotes and all is fine."
+          : 'Nothing pasted yet.'],
+        shifts: []
+      };
+    }
     var arr = Array.isArray(obj) ? obj : obj.shifts;
     if (!Array.isArray(arr) || !arr.length) return { errors: ['No shifts found in the code.'], shifts: [] };
 
-    arr.forEach(function (s, i) {
-      var n = 'Shift ' + (i + 1);
-      var dm = String(s.date || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-      if (!dm) { errors.push(n + ': bad or missing date (need YYYY-MM-DD).'); return; }
-      var dateObj = new Date(+dm[1], +dm[2] - 1, +dm[3]);
-      var start = parseTimeStr(s.start), end = parseTimeStr(s.end);
-      if (start == null || end == null) { errors.push(n + ': bad start/end time.'); return; }
-      if (end <= start) end = Math.min(start + 60, 1439); // guard against overnight/invalid
-      var ws = mondayOf(dateObj);
+    function addShift(dateObj, start, end, label, overnight) {
       shifts.push({
         dateObj: dateObj,
-        weekIso: iso(ws),
+        weekIso: iso(mondayOf(dateObj)),
         dayKey: SCHED_DAYS[(dateObj.getDay() + 6) % 7].key,
         start: start, end: end,
-        label: String(s.label || s.title || 'Work').slice(0, 60),
+        label: label,
+        overnight: !!overnight,
         checked: true, dup: false
       });
+    }
+
+    arr.forEach(function (s, i) {
+      var n = 'Shift ' + (i + 1);
+      var dm = String(s.date || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (!dm) { errors.push(n + ': bad or missing date (need YYYY-MM-DD).'); return; }
+      var dateObj = new Date(+dm[1], +dm[2] - 1, +dm[3]);
+      if (isNaN(dateObj.getTime()) || dateObj.getMonth() !== +dm[2] - 1) {
+        errors.push(n + ': ' + s.date + ' is not a real date.'); return;
+      }
+      var start = parseTimeStr(s.start), end = parseTimeStr(s.end);
+      if (start == null || end == null) { errors.push(n + ': bad start/end time.'); return; }
+      if (start === end) { errors.push(n + ': starts and ends at the same time.'); return; }
+      var label = String(s.label || s.title || 'Work').slice(0, 60);
+
+      if (end > start) { addShift(dateObj, start, end, label, false); return; }
+
+      // Runs past midnight: it genuinely occupies two days, so split it there
+      // rather than silently clipping the tail off.
+      var next = new Date(dateObj);
+      next.setDate(next.getDate() + 1);
+      if (start < 1440) addShift(dateObj, start, 1440, label, true);
+      if (end > 0) addShift(next, 0, end, label, true);
     });
 
     // duplicate detection against stored weeks
@@ -1421,6 +1557,7 @@
       row.appendChild(el('span', 'prev-date', dayNames[s.dateObj.getDay()] + ' ' + fmt(s.dateObj)));
       row.appendChild(el('span', 'prev-time', fmtTime(s.start) + ' – ' + fmtTime(s.end)));
       row.appendChild(el('span', 'prev-label', s.label));
+      if (s.overnight) row.appendChild(el('span', 'prev-overnight', 'OVERNIGHT'));
       if (s.dup) row.appendChild(el('span', 'prev-dup', 'already added'));
       list.appendChild(row);
     });
@@ -1464,18 +1601,102 @@
     updateAddBtn();
   }
 
+  // The prompt carries the schema and today's date, so Claude can resolve
+  // weekday names to real dates and reply in a shape this parser accepts.
+  function buildPrompt() {
+    var today = new Date();
+    var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return [
+      "Here's a photo of my work schedule. Read the shifts off it and reply with ONLY a JSON code block in exactly this shape — no explanation, no extra text:",
+      '',
+      '{"shifts":[{"date":"YYYY-MM-DD","start":"9:00","end":"17:30","label":"Work"}]}',
+      '',
+      'Rules:',
+      '- "date" must be YYYY-MM-DD.',
+      '- "start"/"end" can be 24-hour ("17:30") or 12-hour ("5:30pm").',
+      '- If a shift runs past midnight, give the real end time (e.g. "02:00"). Do not split it yourself.',
+      '- "label" is a short name for the shift, e.g. the role or venue.',
+      '- Include every shift you can see, and only mine.',
+      '- Today is ' + iso(today) + ' (a ' + dayNames[today.getDay()] + '). Use that to turn any weekday names or partial dates into real dates.'
+    ].join('\n');
+  }
+
+  // Clipboard APIs need a secure context and can be refused; every path here
+  // has a manual fallback so the flow never dead-ends.
+  function flash(btn, msg) {
+    var original = btn.textContent;
+    btn.textContent = msg;
+    btn.classList.add('ok');
+    setTimeout(function () { btn.textContent = original; btn.classList.remove('ok'); }, 1800);
+  }
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      ta.remove();
+      ok ? resolve() : reject(new Error('copy refused'));
+    });
+  }
+
   var overlay = document.getElementById('importOverlay');
-  document.getElementById('importBtn').onclick = function () {
-    document.getElementById('importError').style.display = 'none';
-    document.getElementById('importSuccess').style.display = 'none';
-    overlay.classList.add('open');
+  var codeBox = document.getElementById('importCode');
+  var noteEl = document.getElementById('importNote');
+
+  document.getElementById('copyPromptBtn').onclick = function () {
+    var btn = this;
+    copyText(buildPrompt()).then(
+      function () { flash(btn, '✓ Copied — paste it to Claude'); },
+      function () {
+        // Cannot reach the clipboard: show the prompt so it can be copied by hand.
+        codeBox.value = buildPrompt();
+        codeBox.select();
+        noteEl.style.display = '';
+        noteEl.textContent = "Couldn't reach the clipboard. The prompt is in the box above — copy it, send it to Claude with your photo, then paste the reply back over it.";
+      }
+    );
   };
-  document.getElementById('importCancel').onclick = function () { overlay.classList.remove('open'); };
-  overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.classList.remove('open'); });
-  document.getElementById('importPreviewBtn').onclick = function () {
+
+  document.getElementById('pasteBtn').onclick = function () {
+    var btn = this;
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      codeBox.focus();
+      noteEl.style.display = '';
+      noteEl.textContent = 'This browser will not let a page read the clipboard. Tap the box and paste by hand.';
+      return;
+    }
+    navigator.clipboard.readText().then(
+      function (t) {
+        codeBox.value = t;
+        runPreview();
+        flash(btn, '✓ Pasted');
+      },
+      function () {
+        codeBox.focus();
+        noteEl.style.display = '';
+        noteEl.textContent = 'Paste permission was declined. Tap the box and paste by hand.';
+      }
+    );
+  };
+
+  function runPreview() {
     var err = document.getElementById('importError');
     document.getElementById('importSuccess').style.display = 'none';
-    var result = parseImport(document.getElementById('importCode').value);
+    var raw = codeBox.value;
+    if (!raw.trim()) {
+      err.style.display = 'none';
+      noteEl.style.display = 'none';
+      importParsed = null;
+      renderImportPreview();
+      updateAddBtn();
+      return;
+    }
+    var result = parseImport(raw);
     if (result.errors.length) {
       err.style.display = '';
       err.textContent = result.errors.join('\n');
@@ -1483,8 +1704,39 @@
       err.style.display = 'none';
     }
     importParsed = result.shifts;
+
+    var overnights = result.shifts.filter(function (s) { return s.overnight; }).length;
+    if (overnights) {
+      noteEl.style.display = '';
+      noteEl.textContent = 'A shift runs past midnight, so it is split into two blocks — one either side of 12am.';
+    } else {
+      noteEl.style.display = 'none';
+    }
     renderImportPreview();
+  }
+
+  // Preview as you paste; no separate button to forget about.
+  var previewTimer = null;
+  codeBox.addEventListener('input', function () {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(runPreview, 350);
+  });
+
+  document.getElementById('importBtn').onclick = function () {
+    // Reset fully: a preview left over from a previous open would otherwise
+    // keep the Add button live with shifts that are no longer on screen.
+    clearTimeout(previewTimer);
+    codeBox.value = '';
+    importParsed = null;
+    renderImportPreview();
+    updateAddBtn();
+    document.getElementById('importError').style.display = 'none';
+    document.getElementById('importSuccess').style.display = 'none';
+    noteEl.style.display = 'none';
+    overlay.classList.add('open');
   };
+  document.getElementById('importCancel').onclick = function () { overlay.classList.remove('open'); };
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.classList.remove('open'); });
   document.getElementById('importAddBtn').onclick = doImport;
 
   /* ================= Shared ================= */
