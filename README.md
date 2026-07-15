@@ -33,6 +33,30 @@ OS feature and need a native app to supply them.
 Note that an installed copy keeps its own `localStorage`, separate from the same page
 open in a normal browser tab. Entries made in one won't appear in the other.
 
+## Priorities, to-dos and carry-over
+
+Add as many as you like — type and press the **+** button (or Enter). Tap the box to cycle
+**done ✓ → missed ✕ → open**.
+
+**Unfinished work follows you into the new week.** The first time you open the current week,
+anything from the previous week that wasn't ticked off — open *or* missed — is copied
+across, reset to open, and marked **↩**. Done items stay behind. So does anything you
+deleted.
+
+The details, because they're deliberate:
+
+- It only ever happens **once per week**, and only for the **current** week. Past weeks are
+  never rewritten — last week keeps its honest record of what was left open.
+- Peeking at a future week doesn't carry anything into it. Next week gets its items when
+  next week arrives.
+- Skipped a week or two? It carries from the most recent week you actually used.
+- Items already on this week with the same text aren't duplicated.
+
+## Habits
+
+Add as many as you like. Tap a cell to mark the day. **Renaming a habit keeps its history** —
+habits have a stable id, so the name is just a label.
+
 ## The schedule
 
 **Tap any block to edit it** — label, day, start/end (native time pickers), category by

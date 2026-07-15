@@ -257,6 +257,19 @@
     padding: var(--s2) var(--s3); outline: none; background: #fff; font-size: 15px;
   }
   .add-row input:focus { border-color: var(--teal); border-style: solid; }
+  .add-btn {
+    flex: none; width: var(--tap); min-height: var(--tap);
+    border: 2px solid var(--ink); background: var(--card); border-radius: var(--r-sm);
+    font-size: 20px; font-weight: 700; line-height: 1; cursor: pointer;
+    transition: background .15s, transform .1s;
+  }
+  .add-btn:active { transform: scale(.94); background: var(--teal); }
+
+  /* Carried over from a previous week — answers "why is this here?" */
+  .carried {
+    flex: none; font-size: 11px; color: var(--ink-3); cursor: default;
+    line-height: 1; user-select: none;
+  }
 
   /* =========================================================
      Day cards
@@ -711,14 +724,20 @@
           <div class="card-head hd-lime">Top Priorities</div>
           <div class="card-body">
             <div id="priorities"></div>
-            <div class="add-row"><input id="priorityAdd" placeholder="+ Add priority" maxlength="80"></div>
+            <div class="add-row">
+              <input id="priorityAdd" placeholder="Add a priority" maxlength="80">
+              <button class="add-btn" id="priorityAddBtn" aria-label="Add priority">+</button>
+            </div>
           </div>
         </div>
         <div class="card">
           <div class="card-head hd-teal">To-Do List</div>
           <div class="card-body">
             <div id="todos"></div>
-            <div class="add-row"><input id="todoAdd" placeholder="+ Add to-do" maxlength="100"></div>
+            <div class="add-row">
+              <input id="todoAdd" placeholder="Add a to-do" maxlength="100">
+              <button class="add-btn" id="todoAddBtn" aria-label="Add to-do">+</button>
+            </div>
           </div>
         </div>
       </div>
@@ -733,7 +752,10 @@
                 <thead><tr><th></th><th>M</th><th>T</th><th>W</th><th>TH</th><th>F</th><th>SA</th><th>SU</th><th></th></tr></thead>
                 <tbody id="habitRows"></tbody>
               </table>
-              <div class="add-row"><input id="habitAdd" placeholder="+ Add habit" maxlength="40"></div>
+              <div class="add-row">
+                <input id="habitAdd" placeholder="Add a habit" maxlength="40">
+                <button class="add-btn" id="habitAddBtn" aria-label="Add habit">+</button>
+              </div>
             </div>
           </div>
           <div class="card">
@@ -973,15 +995,95 @@
       return normalizeWeek(raw ? JSON.parse(raw) : emptyWeek());
     } catch (e) { return emptyWeek(); }
   }
-  function getHabits() {
-    try { return JSON.parse(localStorage.getItem('wp-habits')) || []; } catch (e) { return []; }
+  /* Habits used to be plain strings, and habitChecks was keyed by the name — so
+     renaming a habit orphaned every tick it had ever earned, in every week, and
+     the history vanished from view while the data lingered under the old key.
+     Habits now carry a stable id.
+
+     No migration is needed, and none should be attempted: a legacy habit adopts
+     its own name as its id, so habitChecks[name] keeps resolving untouched.
+     Only habits added from now on get a generated id. Renaming changes `name`
+     and never `id`, which is the whole point. */
+  function newHabitId() {
+    return 'h' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
   }
-  function saveHabits(h) { localStorage.setItem('wp-habits', JSON.stringify(h)); }
+  function normalizeHabits(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(function (h) {
+        if (typeof h === 'string') return { id: h, name: h };   // legacy: id === name
+        if (h && typeof h === 'object' && h.id) return { id: String(h.id), name: String(h.name == null ? '' : h.name) };
+        return null;
+      })
+      .filter(Boolean);
+  }
+  function getHabits() {
+    try { return normalizeHabits(JSON.parse(localStorage.getItem('wp-habits'))); } catch (e) { return []; }
+  }
+  function saveHabits(h) { localStorage.setItem('wp-habits', JSON.stringify(normalizeHabits(h))); }
 
   function migrateItem(it) {
     if (it.status === undefined) it.status = it.done ? 'done' : '';
   }
-  function load() { data = readWeek(weekStart); }
+  function dateFromIso(s) {
+    var p = String(s).split('-');
+    return new Date(+p[0], +p[1] - 1, +p[2]);
+  }
+
+  // Most recent stored week strictly before the given one. String compare is
+  // safe on YYYY-MM-DD. Returns null when this is the first week ever.
+  function latestWeekIsoBefore(weekIsoStr) {
+    var best = null;
+    weekKeys().forEach(function (k) {
+      var w = k.slice(3);
+      if (w < weekIsoStr && (best === null || w > best)) best = w;
+    });
+    return best;
+  }
+
+  /* Unfinished work should follow you into the new week rather than be stranded
+     in a week you no longer look at.
+
+     Only ever runs for the *current* week, and only once (guarded by carriedAt).
+     Deliberately not for past weeks — carrying into one would rewrite history —
+     and not for future weeks either, or peeking ahead would scatter copies into
+     whichever weeks you happened to look at. Next week gets its items when it
+     becomes the current week.
+
+     Items are copied, not moved: last week keeps its honest record of what was
+     left open. "missed" comes across as open again, because the judgement was
+     about last week, not this one. */
+  function carryOverIfDue() {
+    if (iso(weekStart) !== iso(mondayOf(new Date()))) return 0;
+    if (data.carriedAt) return 0;
+
+    var prevIso = latestWeekIsoBefore(iso(weekStart));
+    if (!prevIso) { data.carriedAt = Date.now(); save(); return 0; }
+
+    var prev = readWeek(dateFromIso(prevIso));
+    var moved = 0;
+    ['priorities', 'todos'].forEach(function (list) {
+      var existing = {};
+      data[list].forEach(function (it) { existing[it.text.trim().toLowerCase()] = true; });
+      prev[list].forEach(function (it) {
+        if (it.status === 'done') return;
+        var text = String(it.text || '').trim();
+        if (!text) return;
+        if (existing[text.toLowerCase()]) return;   // already here; don't duplicate
+        data[list].push({ text: text, status: '', carried: true });
+        existing[text.toLowerCase()] = true;
+        moved++;
+      });
+    });
+    data.carriedAt = Date.now();
+    save();
+    return moved;
+  }
+
+  function load() {
+    data = readWeek(weekStart);
+    carryOverIfDue();
+  }
   function save() { localStorage.setItem(storageKey(), JSON.stringify(data)); }
 
   function el(tag, cls, text) {
@@ -1010,7 +1112,13 @@
       inp.type = 'text'; inp.value = item.text;
       inp.oninput = function () { item.text = inp.value; save(); };
       row.appendChild(inp);
+      if (item.carried) {
+        var mark = el('span', 'carried', '↩');
+        mark.title = 'Carried over unfinished from a previous week';
+        row.appendChild(mark);
+      }
       var del = el('button', 'del-btn', '✕');
+      del.setAttribute('aria-label', 'Delete');
       del.onclick = function () { items.splice(i, 1); save(); render(); };
       row.appendChild(del);
       container.appendChild(row);
@@ -1109,36 +1217,48 @@
     var tbody = document.getElementById('habitRows');
     tbody.innerHTML = '';
     var habits = getHabits();
-    habits.forEach(function (name, hi) {
+    habits.forEach(function (habit, hi) {
       var tr = document.createElement('tr');
       var tdName = document.createElement('td');
       var nameWrap = el('div', 'habit-name');
       var inp = document.createElement('input');
-      inp.value = name;
-      inp.oninput = function () { habits[hi] = inp.value; saveHabits(habits); };
+      inp.value = habit.name;
+      inp.setAttribute('aria-label', 'Habit name');
+      // Renaming touches `name` only — `id` is what the ticks hang off.
+      inp.oninput = function () {
+        habits[hi].name = inp.value;
+        saveHabits(habits);
+      };
       nameWrap.appendChild(inp);
       tdName.appendChild(nameWrap);
       tr.appendChild(tdName);
-      var checks = data.habitChecks[name] || [0,0,0,0,0,0,0];
+
+      var checks = data.habitChecks[habit.id] || [0, 0, 0, 0, 0, 0, 0];
       for (var d = 0; d < 7; d++) {
         (function (d) {
           var td = document.createElement('td');
           var b = el('button', 'hcell h' + (hi % 6) + (checks[d] ? ' on' : ''));
+          b.setAttribute('aria-label', habit.name + ' ' + DAY_DEFS[d].label);
+          b.setAttribute('aria-pressed', checks[d] ? 'true' : 'false');
           b.onclick = function () {
             checks[d] = checks[d] ? 0 : 1;
-            data.habitChecks[name] = checks;
+            data.habitChecks[habit.id] = checks;
             save(); renderHabits(); renderProgress();
           };
           td.appendChild(b);
           tr.appendChild(td);
         })(d);
       }
+
       var tdDel = document.createElement('td');
       var del = el('button', 'del-btn', '✕');
       del.style.visibility = 'visible';
+      del.setAttribute('aria-label', 'Delete habit');
       del.onclick = function () {
-        habits.splice(hi, 1); saveHabits(habits);
-        delete data.habitChecks[name]; save(); renderHabits();
+        habits.splice(hi, 1);
+        saveHabits(habits);
+        delete data.habitChecks[habit.id];
+        save(); renderHabits(); renderProgress();
       };
       tdDel.appendChild(del);
       tr.appendChild(tdDel);
@@ -2158,10 +2278,15 @@
     });
 
     if (Array.isArray(obj.habits)) {
-      if (mode === 'replace') saveHabits(obj.habits);
+      // normalizeHabits copes with older backups that stored plain strings.
+      var incoming = normalizeHabits(obj.habits);
+      if (mode === 'replace') saveHabits(incoming);
       else {
+        // Union by id, not by object identity: indexOf would never match.
         var have = getHabits();
-        obj.habits.forEach(function (h) { if (have.indexOf(h) === -1) have.push(h); });
+        var seen = {};
+        have.forEach(function (h) { seen[h.id] = true; });
+        incoming.forEach(function (h) { if (!seen[h.id]) { have.push(h); seen[h.id] = true; } });
         saveHabits(have);
       }
     }
@@ -2266,33 +2391,44 @@
   document.getElementById('focus').addEventListener('input', function (e) { data.focus = e.target.value; save(); });
   document.getElementById('notes').addEventListener('input', function (e) { data.notes = e.target.value; save(); });
 
-  document.getElementById('habitAdd').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && e.target.value.trim()) {
-      var habits = getHabits();
-      habits.push(e.target.value.trim());
-      saveHabits(habits);
-      e.target.value = '';
-      renderHabits();
-    }
-  });
+  /* Enter alone is not enough on a phone, where the return key is easy to miss
+     and tapping away is the natural gesture. Every list gets a + button too. */
+  function wireAdder(inputId, buttonId, onAdd, after) {
+    var input = document.getElementById(inputId);
+    var commit = function () {
+      var text = input.value.trim();
+      if (!text) return;
+      onAdd(text);
+      input.value = '';
+      after();
+      input.focus();
+    };
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    });
+    // pointerdown + preventDefault, so the input never blurs and the caret stays
+    // put for the next item. A plain click would fire after blur.
+    document.getElementById(buttonId).addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      commit();
+    });
+  }
 
-  document.getElementById('priorityAdd').addEventListener('keydown', function (e) {
-    var pa = e.target;
-    if (e.key === 'Enter' && pa.value.trim()) {
-      if (data.priorities.length >= 5) { pa.value = ''; pa.placeholder = 'Max 5 priorities — stay focused!'; return; }
-      data.priorities.push({ text: pa.value.trim(), status: '' });
-      pa.value = '';
-      save(); render();
-    }
-  });
-  document.getElementById('todoAdd').addEventListener('keydown', function (e) {
-    var ta = e.target;
-    if (e.key === 'Enter' && ta.value.trim()) {
-      data.todos.push({ text: ta.value.trim(), status: '' });
-      ta.value = '';
-      save(); render();
-    }
-  });
+  wireAdder('habitAdd', 'habitAddBtn', function (text) {
+    var habits = getHabits();
+    habits.push({ id: newHabitId(), name: text });
+    saveHabits(habits);
+  }, function () { renderHabits(); });
+
+  // No cap. The old limit of 5 silently swallowed whatever you had typed and
+  // replaced the placeholder with a scolding, which read as the app being broken.
+  wireAdder('priorityAdd', 'priorityAddBtn', function (text) {
+    data.priorities.push({ text: text, status: '' });
+  }, function () { save(); render(); });
+
+  wireAdder('todoAdd', 'todoAddBtn', function (text) {
+    data.todos.push({ text: text, status: '' });
+  }, function () { save(); render(); });
 
   function setWeek(newStart) { weekStart = newStart; load(); render(); }
   document.getElementById('prevBtn').onclick = function () { var d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeek(d); };
