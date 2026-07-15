@@ -1,0 +1,5 @@
+# Repo-wide, so a branch that predates server/.gitignore cannot commit these.
+node_modules/
+.env
+*.log
+*.err
