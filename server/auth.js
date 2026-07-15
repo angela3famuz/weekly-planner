@@ -1,34 +1,10 @@
 import crypto from 'node:crypto';
-import { promisify } from 'node:util';
 import { pool } from './db.js';
 
-const scrypt = promisify(crypto.scrypt);
-
-// scrypt is in Node core: no native module to build on Railway, and one less
-// dependency trusted with the only secret that matters.
-export const SCRYPT = { N: 32768, r: 8, p: 1, keylen: 32, maxmem: 96 * 1024 * 1024 };
-
-export async function hashPassphrase(passphrase, salt = crypto.randomBytes(16)) {
-  const dk = await scrypt(passphrase, salt, SCRYPT.keylen, SCRYPT);
-  return ['scrypt', SCRYPT.N, SCRYPT.r, SCRYPT.p, salt.toString('base64'), dk.toString('base64')].join('$');
-}
-
-export async function verifyPassphrase(passphrase, stored) {
-  try {
-    const parts = String(stored || '').split('$');
-    if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
-    const [, N, r, p, saltB64, hashB64] = parts;
-    const salt = Buffer.from(saltB64, 'base64');
-    const expected = Buffer.from(hashB64, 'base64');
-    if (!expected.length) return false;
-    const dk = await scrypt(passphrase, salt, expected.length, {
-      N: Number(N), r: Number(r), p: Number(p), maxmem: SCRYPT.maxmem,
-    });
-    return crypto.timingSafeEqual(dk, expected);
-  } catch {
-    return false; // malformed hash must read as "wrong", never as "right"
-  }
-}
+// Passphrase hashing lives in kdf.js, which has no dependencies, so the hash
+// tool can run before (or without) a successful npm install. Re-exported here
+// so callers still have one place to look.
+export { SCRYPT, hashPassphrase, verifyPassphrase } from './kdf.js';
 
 // Tokens are 256-bit random, so they cannot be guessed and need no slow KDF.
 // Hashing them at rest means a database leak does not hand over a live session.

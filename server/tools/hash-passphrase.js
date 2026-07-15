@@ -7,10 +7,15 @@
  * The only output is the PASSPHRASE_HASH line, which is safe to paste into
  * Railway's env vars — the hash cannot be turned back into the passphrase.
  *
- *   npm run hash
+ *   node tools/hash-passphrase.js      (or: npm run hash)
+ *
+ * Needs nothing installed — it imports kdf.js, which is node:crypto only.
+ * On Windows, `npm` may be blocked by PowerShell's execution policy; running
+ * node directly sidesteps that entirely.
  */
 import readline from 'node:readline';
-import { hashPassphrase } from '../auth.js';
+// kdf.js, not auth.js: importing auth.js would drag in db.js and therefore pg.
+import { hashPassphrase } from '../kdf.js';
 
 function askHidden(prompt) {
   return new Promise((resolve, reject) => {
