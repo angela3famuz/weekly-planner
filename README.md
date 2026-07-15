@@ -33,6 +33,18 @@ OS feature and need a native app to supply them.
 Note that an installed copy keeps its own `localStorage`, separate from the same page
 open in a normal browser tab. Entries made in one won't appear in the other.
 
+## The schedule
+
+**Tap any block to edit it** — label, day, start/end (native time pickers), category by
+name, status, delete. Same sheet at any block size. **+ Add a block** does the same for a
+new one. Times that run past midnight are split into two blocks either side of 12am, and
+told to you before you save.
+
+Drag still works for quick nudges: drag a block to move it (touch uses the ✥ grip, since a
+plain drag scrolls the page), drag the bottom handle to resize, tap the circle to cycle
+done ✓ / missed ✕ / clear. Blocks under ~55 minutes are too short to host a grip or
+handle without swallowing the block, so use the editor for those.
+
 ## Importing shifts from a photo
 
 The planner never sees your photo. **Import shifts** walks you through a round trip:

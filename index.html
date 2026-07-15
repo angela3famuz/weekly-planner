@@ -277,10 +277,12 @@
   }
   .day-task:last-of-type { border-bottom: none; }
   .day-task .block-time {
-    flex: none;
+    flex: none; border: 1px solid transparent; cursor: pointer;
     font-size: 11px; font-weight: 700; color: var(--ink-2); white-space: nowrap;
     background: var(--sunken); border-radius: 5px; padding: 3px 6px;
+    min-height: 26px;
   }
+  .day-task .block-time:active { border-color: var(--ink); background: #fff; }
   .day-task .block-chip { flex: none; width: 4px; align-self: stretch; border-radius: 2px; min-height: 20px; }
   .day-add {
     width: 100%; border: none; background: transparent; outline: none;
@@ -386,15 +388,15 @@
     min-height: 26px; border-left: 4px solid rgba(0,0,0,.18);
   }
   .tb-row { display: flex; align-items: center; gap: var(--s1); }
-  .tblock input {
-    border: none; background: transparent; font-size: 13px; font-weight: 700;
-    outline: none; width: 100%; flex: 1; min-width: 0; padding: 2px 0;
-  }
   .tblock.st-done { opacity: .78; }
-  .tblock.st-done input { text-decoration: line-through; text-decoration-color: var(--green); text-decoration-thickness: 2px; }
   .tblock.st-missed { opacity: .66; }
-  .tblock.st-missed input { text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 2px; }
-  .tblock.sel { box-shadow: 0 0 0 2.5px var(--ink), 0 4px 14px rgba(74,64,48,.2); }
+  .tb-label {
+    font-size: 13px; font-weight: 700; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tblock.st-done .tb-label { text-decoration: line-through; text-decoration-color: var(--green); text-decoration-thickness: 2px; }
+  .tblock.st-missed .tb-label { text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 2px; }
+  .tb-label.empty { color: rgba(58,58,58,.5); font-weight: 600; }
 
   .tb-status {
     position: relative; flex: none;
@@ -408,26 +410,17 @@
   .tb-status.missed { background: var(--red-bg); border-color: var(--red-bg); color: #fff; }
   .tb-time { font-size: 11px; font-weight: 600; color: rgba(58,58,58,.7); margin-left: 24px; }
 
-  /* Block actions: revealed by selection on touch, by hover on pointer devices. */
-  .tb-actions { position: absolute; top: 2px; right: 2px; display: none; gap: 2px; }
-  .tblock.sel .tb-actions { display: flex; }
-  .tb-del, .tb-grip {
-    border: none; background: rgba(255,255,255,.65); cursor: pointer;
-    font-size: 12px; color: rgba(58,58,58,.75);
+  /* Delete and recolour live in the editor sheet, not as controls crammed into
+     the block — a 30-minute block is 26px tall and cannot host them at all. */
+  .tb-grip {
+    position: absolute; top: 2px; right: 2px;
+    border: none; background: rgba(255,255,255,.65); cursor: grab;
+    font-size: 13px; color: rgba(58,58,58,.75);
     width: 26px; height: 26px; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    touch-action: none; /* the one place a drag must not pan the page */
   }
-  /* The grip is the touch drag target, so it must not pan the page. */
-  .tb-grip { cursor: grab; touch-action: none; font-size: 13px; }
   .tb-grip:active { cursor: grabbing; }
-
-  .tb-colors { position: absolute; bottom: 20px; right: var(--s2); display: none; gap: var(--s1); }
-  .tblock.sel .tb-colors { display: flex; }
-  .tb-dot {
-    position: relative; width: 18px; height: 18px; border-radius: 50%;
-    border: 1.5px solid rgba(0,0,0,.25); cursor: pointer; padding: 0;
-  }
-  .tb-dot::before { content: ""; position: absolute; inset: -5px; }
   .tb-resize {
     position: absolute; bottom: 0; left: 0; right: 0; height: 16px;
     cursor: ns-resize; touch-action: none;
@@ -436,8 +429,11 @@
     content: ""; display: block; width: 30px; height: 4px; border-radius: 2px;
     background: rgba(0,0,0,.22); margin: 6px auto 0;
   }
-  /* Short blocks cannot fit stacked controls; drop the dots rather than overlap. */
-  .tblock.short .tb-colors { display: none !important; }
+  /* Too small to host a drag grip or a resize handle without swallowing the
+     block itself; the editor sheet covers both for these. */
+  .tblock.compact .tb-grip, .tblock.compact .tb-resize { display: none; }
+  .tblock.compact { padding-bottom: var(--s1); }
+  .tblock.compact .tb-time { display: none; }
   .tblock.ghost { opacity: .6; pointer-events: none; }
 
   /* Category legend */
@@ -505,6 +501,43 @@
     font-size: 13px; color: var(--ink-2); margin-top: var(--s2);
     background: var(--yellow-soft); border-radius: var(--r-sm); padding: var(--s2) var(--s3); line-height: 1.5;
   }
+  /* Block editor fields */
+  .fld { display: block; margin-bottom: var(--s3); }
+  .fld-label {
+    display: block; font-size: 11px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--ink-2); margin-bottom: var(--s1);
+  }
+  .fld input[type="text"], .fld input[type="time"], .fld select {
+    width: 100%; min-height: var(--tap); font-size: 16px;
+    border: 1.5px solid #cfc8ba; border-radius: var(--r-sm);
+    padding: var(--s2) var(--s3); background: #fff; outline: none;
+  }
+  .fld input:focus, .fld select:focus { border-color: var(--teal); border-width: 2px; }
+  .fld-row { display: flex; gap: var(--s3); }
+  .fld-row .fld { flex: 1; min-width: 0; }
+
+  .chip-row { display: flex; gap: var(--s2); flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: var(--s2);
+    border: 2px solid transparent; background: var(--sunken);
+    border-radius: var(--r-sm); padding: var(--s2) var(--s3);
+    min-height: var(--tap); font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .chip.on { border-color: var(--ink); background: #fff; }
+  .chip .chip-swatch {
+    width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15);
+  }
+  .btn.danger { border-color: var(--red); color: var(--red); margin-right: auto; }
+  .btn.danger:active { background: var(--pink-soft); }
+
+  /* Add-block button above the timeline */
+  .sched-add {
+    width: 100%; margin-bottom: var(--s3);
+    border: 2px dashed #cfc8ba; background: var(--card); border-radius: var(--r-sm);
+    min-height: var(--tap); font-size: 14px; font-weight: 700; color: var(--ink-2); cursor: pointer;
+  }
+  .sched-add:active { border-color: var(--teal); color: var(--ink); }
+
   /* Backup & restore */
   input[type="file"] {
     width: 100%; font-size: 14px; padding: var(--s2);
@@ -573,12 +606,8 @@
     .icon-btn:hover { transform: scale(1.04); }
     .tab-btn:not(.active):hover { color: var(--ink); }
     .hcell:hover { transform: scale(1.12); }
-    .tblock:hover .tb-actions { display: flex; }
-    .tblock:hover .tb-colors { display: flex; }
-    .tb-del:hover { color: var(--red); background: #fff; }
     .day-col { cursor: crosshair; }
-    .tblock { cursor: grab; }
-    .tblock:active { cursor: grabbing; }
+    .tblock { cursor: pointer; }
     /* A mouse can drag the block body directly, so the grip is redundant. */
     .tb-grip { display: none; }
     .day-pip:hover { background: var(--yellow-soft); }
@@ -723,6 +752,7 @@
     <div class="sched-card">
       <div class="legend" id="catLegend"></div>
       <div class="day-strip" id="dayStrip"></div>
+      <button class="sched-add" id="addBlockBtn">+ Add a block</button>
       <div class="sched-hint" id="schedHint"></div>
       <div class="sched-scroll">
         <div class="sched-grid" id="schedGrid"></div>
@@ -761,6 +791,57 @@
     <div class="modal-btns">
       <button class="btn" id="importCancel">Close</button>
       <button class="btn primary" id="importAddBtn" disabled>Add selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Block editor -->
+<div class="overlay" id="blockOverlay">
+  <div class="modal">
+    <h2 id="beTitle">Edit block</h2>
+
+    <label class="fld">
+      <span class="fld-label">What is it?</span>
+      <input type="text" id="beLabel" maxlength="60" placeholder="e.g. Cafe shift">
+    </label>
+
+    <label class="fld">
+      <span class="fld-label">Day</span>
+      <select id="beDay"></select>
+    </label>
+
+    <div class="fld-row">
+      <label class="fld">
+        <span class="fld-label">Starts</span>
+        <input type="time" id="beStart" step="300">
+      </label>
+      <label class="fld">
+        <span class="fld-label">Ends</span>
+        <input type="time" id="beEnd" step="300">
+      </label>
+    </div>
+
+    <div class="fld">
+      <span class="fld-label">Category</span>
+      <div class="chip-row" id="beCats"></div>
+    </div>
+
+    <div class="fld">
+      <span class="fld-label">Status</span>
+      <div class="chip-row" id="beStatus">
+        <button class="chip" data-status="">Open</button>
+        <button class="chip" data-status="done">✓ Done</button>
+        <button class="chip" data-status="missed">✕ Missed</button>
+      </div>
+    </div>
+
+    <div class="import-note" id="beNote" style="display:none"></div>
+    <div class="import-error" id="beError" style="display:none"></div>
+
+    <div class="modal-btns">
+      <button class="btn danger" id="beDelete">Delete</button>
+      <button class="btn" id="beCancel">Cancel</button>
+      <button class="btn primary" id="beSave">Save</button>
     </div>
   </div>
 </div>
@@ -970,7 +1051,12 @@
             box.title = 'Click: done ✓ · again: missed ✕ · again: clear';
             box.onclick = function () { cycleStatus(b); save(); render(); };
             row.appendChild(box);
-            row.appendChild(el('span', 'block-time', fmtTime(b.start) + '–' + fmtTime(b.end)));
+            // The time chip opens the same editor as the Schedule tab, so a
+            // block can be changed without switching views.
+            var chip = el('button', 'block-time', fmtTime(b.start) + '–' + fmtTime(b.end));
+            chip.title = 'Edit this block';
+            chip.onclick = function () { openBlockEditor(b); };
+            row.appendChild(chip);
             var inp = document.createElement('input');
             inp.className = 'task-input'; inp.type = 'text'; inp.value = b.text || '';
             inp.placeholder = 'label...';
@@ -978,6 +1064,7 @@
             inp.onchange = function () { buildScheduleGrid(); };
             row.appendChild(inp);
             var del = el('button', 'del-btn', '✕');
+            del.setAttribute('aria-label', 'Delete block');
             del.onclick = function () {
               var j = data.blocks.indexOf(b);
               if (j > -1) data.blocks.splice(j, 1);
@@ -1201,8 +1288,8 @@
   function renderSchedHint() {
     // Touch cannot drag-to-create: that gesture is reserved for scrolling the page.
     document.getElementById('schedHint').textContent = isWide()
-      ? 'Click or drag on a day to create a time block · drag to move · drag the bottom handle to resize · click the circle to mark done ✓ / missed ✕ · hover a block to recolor or delete'
-      : 'Tap the timeline to add an hour block · tap a block to select it, then drag ✥ to move, drag the bottom handle to resize, or recolor and delete · tap the circle to mark done ✓ / missed ✕';
+      ? 'Click a block to edit it · click or drag an empty slot to create one · drag to move · drag the bottom handle to resize · click the circle to mark done ✓ / missed ✕'
+      : 'Tap a block to edit it — label, day, times, category, delete · tap an empty slot to add an hour · drag ✥ to move · drag the bottom handle to resize · tap the circle to mark done ✓ / missed ✕';
   }
 
   function buildScheduleGrid() {
@@ -1267,65 +1354,38 @@
 
   function makeBlockEl(b) {
     var h = (b.end - b.start) * PX_PER_MIN;
-    var div = el('div', 'tblock' + (b.status ? ' st-' + b.status : '') + (h < 60 ? ' short' : ''));
+    var div = el('div', 'tblock' + (b.status ? ' st-' + b.status : '') + (h < 44 ? ' compact' : ''));
     div.style.top = ((b.start - dayStartMin) * PX_PER_MIN) + 'px';
     div.style.height = h + 'px';
     div.style.background = b.color;
 
     var row = el('div', 'tb-row');
     var status = el('button', 'tb-status ' + b.status, statusMark(b.status));
-    status.title = 'Click: done ✓ · again: missed ✕ · again: clear';
+    status.title = 'Done ✓ · again: missed ✕ · again: clear';
+    status.setAttribute('aria-label', 'Mark done or missed');
     status.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
-    status.onclick = function () {
+    status.onclick = function (e) {
+      e.stopPropagation();
       cycleStatus(b);
       save(); renderBlocks(); renderDays(); renderProgress();
     };
     row.appendChild(status);
 
-    var inp = document.createElement('input');
-    inp.value = b.text || '';
-    inp.placeholder = 'label...';
-    inp.oninput = function () { b.text = inp.value; save(); };
-    inp.onchange = function () { renderDays(); };
-    inp.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
-    row.appendChild(inp);
+    var label = el('span', 'tb-label' + (b.text ? '' : ' empty'), b.text || 'Untitled');
+    row.appendChild(label);
     div.appendChild(row);
 
     var time = el('div', 'tb-time', fmtTime(b.start) + ' – ' + fmtTime(b.end));
     div.appendChild(time);
-
-    var actions = el('div', 'tb-actions');
 
     var grip = el('button', 'tb-grip', '✥');
     grip.title = 'Drag to move';
     grip.setAttribute('aria-label', 'Drag to move block');
     grip.addEventListener('pointerdown', function (e) {
       e.stopPropagation(); e.preventDefault();
-      startMove(e, b, div, time, { keepSelection: true });
+      startMove(e, b, div, time, { silent: true });
     });
-    actions.appendChild(grip);
-
-    var del = el('button', 'tb-del', '✕');
-    del.setAttribute('aria-label', 'Delete block');
-    del.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
-    del.onclick = function () {
-      var i = data.blocks.indexOf(b);
-      if (i > -1) data.blocks.splice(i, 1);
-      save(); buildScheduleGrid(); renderDays(); renderProgress();
-    };
-    actions.appendChild(del);
-    div.appendChild(actions);
-
-    var dots = el('div', 'tb-colors');
-    getCats().forEach(function (c) {
-      var dot = el('button', 'tb-dot');
-      dot.style.background = c.color;
-      dot.title = c.name;
-      dot.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
-      dot.onclick = function () { b.cat = c.id; b.color = c.color; save(); renderBlocks(); renderDays(); };
-      dots.appendChild(dot);
-    });
-    div.appendChild(dots);
+    div.appendChild(grip);
 
     var handle = el('div', 'tb-resize');
     handle.addEventListener('pointerdown', function (e) {
@@ -1398,22 +1458,6 @@
     });
   }
 
-  // Selecting a block reveals its delete and recolor controls. On a pointer
-  // device hover does this, but touch has no hover — so a tap selects.
-  function selectBlock(div) {
-    var already = div.classList.contains('sel');
-    clearBlockSelection();
-    if (!already) div.classList.add('sel');
-  }
-  function clearBlockSelection() {
-    Array.prototype.forEach.call(document.querySelectorAll('.tblock.sel'), function (n) {
-      n.classList.remove('sel');
-    });
-  }
-  document.addEventListener('pointerdown', function (e) {
-    if (!e.target.closest || !e.target.closest('.tblock')) clearBlockSelection();
-  });
-
   function startMove(e, b, div, timeEl, opts) {
     opts = opts || {};
     var duration = b.end - b.start;
@@ -1434,8 +1478,9 @@
       div.style.top = ((b.start - dayStartMin) * PX_PER_MIN) + 'px';
       timeEl.textContent = fmtTime(b.start) + ' – ' + fmtTime(b.end);
     }, function () {
+      // A drag repositions; a tap that never moved means "open this block".
       if (moved) { save(); renderDays(); renderDayStrip(); }
-      else if (!opts.keepSelection) selectBlock(div);
+      else if (!opts.silent) openBlockEditor(b);
     });
   }
 
@@ -1446,6 +1491,181 @@
       timeEl.textContent = fmtTime(b.start) + ' – ' + fmtTime(b.end);
     }, function () { save(); renderDays(); });
   }
+
+  /* ================= Block editor =================
+     Delete and category used to be controls crammed inside the block itself,
+     which meant anything under ~75 minutes could not be recoloured at all and
+     a 30-minute block could not even fit the delete button. A sheet works the
+     same at any size, and lets times be typed rather than dragged for. */
+
+  var editingBlock = null; // null => creating a new one
+
+  function minToTimeValue(min) {
+    var t = Math.max(0, Math.min(1439, min % 1440));
+    return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+  }
+  function timeValueToMin(v) {
+    var m = /^(\d{1,2}):(\d{2})$/.exec(String(v || ''));
+    if (!m) return null;
+    var h = +m[1], mi = +m[2];
+    if (h > 23 || mi > 59) return null;
+    return h * 60 + mi;
+  }
+
+  var beCat = null, beStatus = '';
+
+  function renderBeCats() {
+    var wrap = document.getElementById('beCats');
+    wrap.innerHTML = '';
+    getCats().forEach(function (c) {
+      var chip = el('button', 'chip' + (beCat === c.id ? ' on' : ''));
+      var sw = el('span', 'chip-swatch');
+      sw.style.background = c.color;
+      chip.appendChild(sw);
+      chip.appendChild(document.createTextNode(c.name));
+      chip.onclick = function () { beCat = c.id; renderBeCats(); };
+      wrap.appendChild(chip);
+    });
+  }
+  function renderBeStatus() {
+    Array.prototype.forEach.call(document.querySelectorAll('#beStatus .chip'), function (c) {
+      c.classList.toggle('on', c.dataset.status === beStatus);
+      c.onclick = function () { beStatus = c.dataset.status; renderBeStatus(); };
+    });
+  }
+
+  function openBlockEditor(b) {
+    editingBlock = b || null;
+    document.getElementById('beTitle').textContent = b ? 'Edit block' : 'Add a block';
+    document.getElementById('beDelete').style.display = b ? '' : 'none';
+    document.getElementById('beError').style.display = 'none';
+    document.getElementById('beNote').style.display = 'none';
+
+    var daySel = document.getElementById('beDay');
+    daySel.innerHTML = '';
+    SCHED_DAYS.forEach(function (d) {
+      var o = document.createElement('option');
+      o.value = d.key;
+      o.textContent = d.label + ' ' + fmt(dateOfDay(d.key));
+      daySel.appendChild(o);
+    });
+
+    if (b) {
+      document.getElementById('beLabel').value = b.text || '';
+      daySel.value = b.day;
+      document.getElementById('beStart').value = minToTimeValue(b.start);
+      document.getElementById('beEnd').value = minToTimeValue(b.end === 1440 ? 1439 : b.end);
+      beCat = b.cat || getCats()[0].id;
+      beStatus = b.status || '';
+    } else {
+      // Default to the next whole hour on the day being looked at.
+      var now = new Date();
+      var startMin = clamp(snap((now.getHours() + 1) * 60), dayStartMin, 22 * 60);
+      document.getElementById('beLabel').value = '';
+      daySel.value = isWide() ? (todayKeyInWeek() || 'mon') : selectedDay;
+      document.getElementById('beStart').value = minToTimeValue(startMin);
+      document.getElementById('beEnd').value = minToTimeValue(startMin + 60);
+      beCat = activeCat || getCats()[0].id;
+      beStatus = '';
+    }
+    renderBeCats();
+    renderBeStatus();
+    updateBeNote();
+    document.getElementById('blockOverlay').classList.add('open');
+  }
+
+  // Warn before saving, not after, when the times imply a midnight crossing.
+  function updateBeNote() {
+    var s = timeValueToMin(document.getElementById('beStart').value);
+    var e = timeValueToMin(document.getElementById('beEnd').value);
+    var note = document.getElementById('beNote');
+    if (s != null && e != null && e <= s && !(s === e)) {
+      note.style.display = '';
+      note.textContent = 'That runs past midnight, so it will be saved as two blocks — one either side of 12am.';
+    } else {
+      note.style.display = 'none';
+    }
+  }
+  document.getElementById('beStart').addEventListener('input', updateBeNote);
+  document.getElementById('beEnd').addEventListener('input', updateBeNote);
+
+  // Writes a range to the right day(s), splitting at midnight and rolling into
+  // next week when a Sunday night spills over. Mirrors the photo importer.
+  function addBlockRange(dayKey, start, end, props) {
+    var d = dateOfDay(dayKey);
+    var parts = [];
+    if (end > start) parts.push({ d: d, s: start, e: end });
+    else {
+      var nx = new Date(d); nx.setDate(nx.getDate() + 1);
+      if (start < 1440) parts.push({ d: d, s: start, e: 1440 });
+      if (end > 0) parts.push({ d: nx, s: 0, e: end });
+    }
+    parts.forEach(function (p) {
+      var ws = mondayOf(p.d);
+      var isCurrent = iso(ws) === iso(weekStart);
+      var week = isCurrent ? data : readWeek(ws);
+      week.blocks.push({
+        day: SCHED_DAYS[(p.d.getDay() + 6) % 7].key,
+        start: p.s, end: p.e,
+        text: props.text, status: props.status,
+        cat: props.cat, color: props.color
+      });
+      if (isCurrent) save();
+      else localStorage.setItem('wp-' + iso(ws), JSON.stringify(week));
+    });
+    return parts.length;
+  }
+
+  function closeBlockEditor() {
+    document.getElementById('blockOverlay').classList.remove('open');
+    editingBlock = null;
+  }
+
+  function saveBlockEditor() {
+    var err = document.getElementById('beError');
+    var start = timeValueToMin(document.getElementById('beStart').value);
+    var end = timeValueToMin(document.getElementById('beEnd').value);
+    if (start == null || end == null) {
+      err.style.display = ''; err.textContent = 'Please give a start and an end time.'; return;
+    }
+    if (start === end) {
+      err.style.display = ''; err.textContent = 'The start and end are the same time.'; return;
+    }
+    var cat = catById(beCat);
+    var props = {
+      text: document.getElementById('beLabel').value.trim(),
+      status: beStatus,
+      cat: cat.id,
+      color: cat.color
+    };
+
+    // Editing is remove-then-add, so a block that becomes overnight splits
+    // properly and one that changes day lands in the right week.
+    if (editingBlock) {
+      var i = data.blocks.indexOf(editingBlock);
+      if (i > -1) data.blocks.splice(i, 1);
+    }
+    addBlockRange(document.getElementById('beDay').value, start, end, props);
+    save();
+    closeBlockEditor();
+    load();
+    render();
+  }
+
+  document.getElementById('beSave').onclick = saveBlockEditor;
+  document.getElementById('beCancel').onclick = closeBlockEditor;
+  document.getElementById('beDelete').onclick = function () {
+    if (!editingBlock) return;
+    var i = data.blocks.indexOf(editingBlock);
+    if (i > -1) data.blocks.splice(i, 1);
+    save();
+    closeBlockEditor();
+    render();
+  };
+  document.getElementById('blockOverlay').addEventListener('click', function (e) {
+    if (e.target.id === 'blockOverlay') closeBlockEditor();
+  });
+  document.getElementById('addBlockBtn').onclick = function () { openBlockEditor(null); };
 
   /* ================= Import shifts ================= */
   var importParsed = null; // [{dateObj, weekKey, dayKey, start, end, label, dup, checked}]
