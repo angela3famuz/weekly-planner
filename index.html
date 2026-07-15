@@ -98,10 +98,12 @@
   .topbar.stuck { border-bottom-color: var(--line); box-shadow: 0 4px 16px rgba(74,64,48,.06); }
 
   /* Rows wrap on a phone and collapse onto one line once there is room:
-     [ title            camera ]      [ title  week-nav  camera ]
-     [ <  week label  >  Today ]  ->  [ tabs        progress    ]
-     [ tabs                     ]
-     [ progress                 ]                                   */
+     [ title                    ]      [ title       week-nav      ]
+     [ <  week label  >  Today  ]  ->  [ tabs  progress  actions   ]
+     [ tabs            actions  ]
+     [ progress                 ]
+     The title gets its own line under 900px, so it centres on the row with
+     nothing to balance against. */
   .topbar-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
   .topbar-row + .topbar-row { margin-top: var(--s2); }
 
@@ -111,10 +113,7 @@
     font-size: 25px; font-weight: 700; letter-spacing: .5px;
     white-space: nowrap; line-height: 1.15;
   }
-  .topbar-spacer { visibility: hidden; pointer-events: none; }
-  /* Below ~360px the nowrap title cannot shrink and would run under the
-     Import button, so step the type down rather than let it collide. */
-  @media (max-width: 359px) { h1 { font-size: 21px; } }
+  @media (max-width: 359px) { h1 { font-size: 22px; } }
 
   /* Week navigation — forced onto its own line while wrapping is on */
   .week-nav {
@@ -148,6 +147,8 @@
   }
   .icon-btn:active { transform: scale(.94); }
   .icon-btn .icon-label { display: none; }
+  .icon-btn.plain { background: var(--card); font-size: 18px; }
+  .topbar-actions { display: flex; align-items: center; gap: var(--s2); flex: none; }
 
   /* Tabs — segmented control */
   .tabs {
@@ -504,6 +505,23 @@
     font-size: 13px; color: var(--ink-2); margin-top: var(--s2);
     background: var(--yellow-soft); border-radius: var(--r-sm); padding: var(--s2) var(--s3); line-height: 1.5;
   }
+  /* Backup & restore */
+  input[type="file"] {
+    width: 100%; font-size: 14px; padding: var(--s2);
+    border: 1.5px dashed #cfc8ba; border-radius: var(--r-sm); background: #fff;
+  }
+  input[type="file"]::file-selector-button {
+    font-family: inherit; font-weight: 700; font-size: 13px;
+    border: 2px solid var(--ink); background: var(--card);
+    border-radius: var(--r-sm); padding: var(--s2) var(--s3); margin-right: var(--s2); cursor: pointer;
+  }
+  .paste-fallback { margin-top: var(--s2); }
+  .paste-fallback summary {
+    font-size: 13px; color: var(--ink-2); cursor: pointer;
+    min-height: 32px; display: flex; align-items: center;
+  }
+  .backup-stat { font-weight: 700; color: var(--ink); }
+
   .prev-overnight {
     font-size: 10px; font-weight: 800; letter-spacing: .5px; white-space: nowrap;
     background: var(--purple); border-radius: 4px; padding: 2px 5px;
@@ -595,12 +613,12 @@
   /* Only once the title, week nav and Import button genuinely fit side by side.
      The title shares the row here, so it sits left and needs no balancing. */
   @media (min-width: 900px) {
-    .topbar-spacer { display: none; }
     h1 { flex: none; font-size: 34px; }
     .topbar-row { flex-wrap: nowrap; gap: var(--s3); }
     .week-nav { flex: none; order: 0; margin-left: auto; }
     .week-label { flex: none; }
     .progress-wrap { flex: 1; }
+    .topbar-actions { order: 3; } /* buttons sit at the end once it is one line */
   }
 
   @media (min-width: 1000px) {
@@ -620,9 +638,6 @@
 <div class="planner">
   <header class="topbar" id="topbar">
     <div class="topbar-row main">
-      <!-- Invisible twin of the Import button: balances the row so the title
-           lands on the true centre rather than 22px left of it. -->
-      <span class="icon-btn topbar-spacer" aria-hidden="true">&#128247;<span class="icon-label">Import shifts</span></span>
       <h1>Weekly Planner</h1>
       <div class="week-nav">
         <button class="nav-btn" id="prevBtn" aria-label="Previous week">&#8592;</button>
@@ -630,15 +645,18 @@
         <button class="nav-btn" id="nextBtn" aria-label="Next week">&#8594;</button>
         <button class="nav-btn today-btn" id="todayBtn">Today</button>
       </div>
-      <button class="icon-btn" id="importBtn" aria-label="Import shifts from a photo">
-        &#128247;<span class="icon-label">Import shifts</span>
-      </button>
     </div>
 
     <div class="topbar-row sub">
       <div class="tabs" role="tablist">
         <button class="tab-btn active" id="tabPlanner" role="tab">Planner</button>
         <button class="tab-btn" id="tabSchedule" role="tab">Schedule</button>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="importBtn" aria-label="Import shifts from a photo">
+          &#128247;<span class="icon-label">Import shifts</span>
+        </button>
+        <button class="icon-btn plain" id="backupBtn" aria-label="Backup and restore">&#8943;</button>
       </div>
       <div class="progress-wrap">
         <div class="progress-bar">
@@ -743,6 +761,39 @@
     <div class="modal-btns">
       <button class="btn" id="importCancel">Close</button>
       <button class="btn primary" id="importAddBtn" disabled>Add selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Backup & restore -->
+<div class="overlay" id="backupOverlay">
+  <div class="modal">
+    <h2>&#128190; Backup &amp; restore</h2>
+
+    <ol class="steps">
+      <li>
+        <span class="step-text" id="backupStatus"></span>
+        <button class="btn primary step-btn" id="downloadBackupBtn">Download backup</button>
+        <div class="import-note" id="backupNote" style="display:none"></div>
+      </li>
+      <li>
+        <span class="step-text">Restore from a backup file.</span>
+        <input type="file" id="restoreFile" accept="application/json,.json,text/plain">
+        <details class="paste-fallback">
+          <summary>Or paste backup text</summary>
+          <textarea id="restoreText" placeholder='{"app":"weekly-planner",…}'></textarea>
+        </details>
+      </li>
+    </ol>
+
+    <div class="import-error" id="restoreError" style="display:none"></div>
+    <div class="import-note" id="restoreSummary" style="display:none"></div>
+    <div class="import-success" id="restoreSuccess" style="display:none"></div>
+
+    <div class="modal-btns">
+      <button class="btn" id="backupClose">Close</button>
+      <button class="btn" id="restoreMergeBtn" disabled>Merge</button>
+      <button class="btn primary" id="restoreReplaceBtn" disabled>Replace all</button>
     </div>
   </div>
 </div>
@@ -1738,6 +1789,245 @@
   document.getElementById('importCancel').onclick = function () { overlay.classList.remove('open'); };
   overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.classList.remove('open'); });
   document.getElementById('importAddBtn').onclick = doImport;
+
+  /* ================= Backup & restore =================
+     Everything lives in localStorage, which iOS Safari will delete after
+     seven days without a visit (home-screen installs are exempt). This is
+     the escape hatch: a file you own, that survives a wiped phone. */
+
+  var WEEK_KEY_RE = /^wp-(\d{4}-\d{2}-\d{2})$/;
+  var BACKUP_VERSION = 1;
+
+  function weekKeys() {
+    var out = [];
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && WEEK_KEY_RE.test(k)) out.push(k);
+    }
+    return out.sort();
+  }
+
+  function collectBackup() {
+    var weeks = {};
+    weekKeys().forEach(function (k) {
+      try { weeks[k.match(WEEK_KEY_RE)[1]] = JSON.parse(localStorage.getItem(k)); } catch (e) {}
+    });
+    return {
+      app: 'weekly-planner',
+      version: BACKUP_VERSION,
+      exportedAt: new Date().toISOString(),
+      weeks: weeks,
+      habits: getHabits(),
+      cats: getCats(),
+      activeCat: activeCat
+    };
+  }
+
+  function backupFilename() { return 'weekly-planner-' + iso(new Date()) + '.json'; }
+
+  function isStandalone() {
+    return window.navigator.standalone === true ||
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  }
+
+  function downloadBackup() {
+    var text = JSON.stringify(collectBackup(), null, 2);
+    var name = backupFilename();
+    var note = document.getElementById('backupNote');
+    note.style.display = 'none';
+
+    // An <a download> is unreliable inside an installed iOS web app, so hand
+    // the file to the system share sheet there instead (Save to Files, etc).
+    if (isStandalone() && navigator.canShare && window.File) {
+      try {
+        var file = new File([text], name, { type: 'application/json' });
+        if (navigator.canShare({ files: [file] })) {
+          navigator.share({ files: [file], title: name }).catch(function () {});
+          return;
+        }
+      } catch (e) { /* fall through to the anchor */ }
+    }
+
+    try {
+      var blob = new Blob([text], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    } catch (e) {
+      note.style.display = '';
+      note.textContent = 'This browser blocked the download. Open "Or paste backup text" below, copy what is there, and save it somewhere safe.';
+      document.getElementById('restoreText').value = text;
+    }
+  }
+
+  var restoreCandidate = null;
+
+  function readBackup(text) {
+    var obj = parseJsonLoose(text); // same tolerance as the shift importer
+    if (!obj || typeof obj !== 'object') return { error: 'That file is not readable as a backup.' };
+    if (obj.app !== 'weekly-planner' || !obj.weeks || typeof obj.weeks !== 'object') {
+      return { error: 'That is a JSON file, but not a Weekly Planner backup.' };
+    }
+    if (obj.version > BACKUP_VERSION) {
+      return { error: 'That backup was made by a newer version of the planner than this one.' };
+    }
+    var bad = Object.keys(obj.weeks).filter(function (w) { return !/^\d{4}-\d{2}-\d{2}$/.test(w); });
+    if (bad.length) return { error: 'That backup has weeks with unreadable dates (' + bad[0] + ').' };
+    return { backup: obj };
+  }
+
+  function describeBackup(obj) {
+    var ws = Object.keys(obj.weeks).sort();
+    var when = '';
+    try { when = new Date(obj.exportedAt).toLocaleDateString(); } catch (e) {}
+    var blocks = 0;
+    ws.forEach(function (w) { blocks += (obj.weeks[w].blocks || []).length; });
+    return {
+      weeks: ws.length,
+      blocks: blocks,
+      range: ws.length ? ws[0] + ' → ' + ws[ws.length - 1] : 'none',
+      when: when
+    };
+  }
+
+  function showRestoreCandidate(text) {
+    var err = document.getElementById('restoreError');
+    var sum = document.getElementById('restoreSummary');
+    document.getElementById('restoreSuccess').style.display = 'none';
+    var res = readBackup(text);
+    if (res.error) {
+      restoreCandidate = null;
+      err.style.display = ''; err.textContent = res.error;
+      sum.style.display = 'none';
+    } else {
+      restoreCandidate = res.backup;
+      var d = describeBackup(res.backup);
+      err.style.display = 'none';
+      sum.style.display = '';
+      sum.textContent = 'This backup holds ' + d.weeks + ' week' + (d.weeks === 1 ? '' : 's') +
+        ' (' + d.range + ') and ' + d.blocks + ' time block' + (d.blocks === 1 ? '' : 's') +
+        (d.when ? ', saved ' + d.when : '') + '. Merge keeps every week you already have and only fills in missing ones. Replace all wipes what is here first.';
+    }
+    updateRestoreBtns();
+  }
+
+  function updateRestoreBtns() {
+    var on = !!restoreCandidate;
+    document.getElementById('restoreMergeBtn').disabled = !on;
+    document.getElementById('restoreReplaceBtn').disabled = !on;
+  }
+
+  function applyBackup(obj, mode) {
+    if (mode === 'replace') {
+      weekKeys().forEach(function (k) { localStorage.removeItem(k); });
+    }
+    var added = 0, skipped = 0;
+    Object.keys(obj.weeks).forEach(function (w) {
+      var key = 'wp-' + w;
+      // Merge must never clobber: a week already here always wins.
+      if (mode === 'merge' && localStorage.getItem(key) !== null) { skipped++; return; }
+      try {
+        localStorage.setItem(key, JSON.stringify(normalizeWeek(obj.weeks[w])));
+        added++;
+      } catch (e) { skipped++; }
+    });
+
+    if (Array.isArray(obj.habits)) {
+      if (mode === 'replace') saveHabits(obj.habits);
+      else {
+        var have = getHabits();
+        obj.habits.forEach(function (h) { if (have.indexOf(h) === -1) have.push(h); });
+        saveHabits(have);
+      }
+    }
+    if (mode === 'replace') {
+      if (Array.isArray(obj.cats) && obj.cats.length) saveCats(obj.cats);
+      if (obj.activeCat) { activeCat = obj.activeCat; localStorage.setItem('wp-active-cat', activeCat); }
+    }
+    return { added: added, skipped: skipped };
+  }
+
+  function doRestore(mode) {
+    if (!restoreCandidate) return;
+    var r = applyBackup(restoreCandidate, mode);
+    load();
+    renderImportCat();
+    selectedDay = todayKeyInWeek() || 'mon';
+    render();
+    var ok = document.getElementById('restoreSuccess');
+    ok.style.display = '';
+    ok.textContent = '✓ Restored ' + r.added + ' week' + (r.added === 1 ? '' : 's') +
+      (r.skipped ? ' · kept ' + r.skipped + ' you already had' : '') + '.';
+    document.getElementById('restoreSummary').style.display = 'none';
+    restoreCandidate = null;
+    updateRestoreBtns();
+    refreshBackupStatus();
+  }
+
+  function refreshBackupStatus() {
+    var n = weekKeys().length;
+    var blocks = 0;
+    weekKeys().forEach(function (k) {
+      try { blocks += (JSON.parse(localStorage.getItem(k)).blocks || []).length; } catch (e) {}
+    });
+    document.getElementById('backupStatus').innerHTML = '';
+    var s = document.getElementById('backupStatus');
+    s.appendChild(document.createTextNode('You have '));
+    s.appendChild(el('span', 'backup-stat', n + ' week' + (n === 1 ? '' : 's')));
+    s.appendChild(document.createTextNode(' saved on this device, with ' + blocks + ' time block' + (blocks === 1 ? '' : 's') + '. Everything is stored only here — nothing is uploaded.'));
+  }
+
+  var backupOverlay = document.getElementById('backupOverlay');
+  document.getElementById('backupBtn').onclick = function () {
+    restoreCandidate = null;
+    updateRestoreBtns();
+    document.getElementById('restoreError').style.display = 'none';
+    document.getElementById('restoreSummary').style.display = 'none';
+    document.getElementById('restoreSuccess').style.display = 'none';
+    document.getElementById('backupNote').style.display = 'none';
+    document.getElementById('restoreFile').value = '';
+    document.getElementById('restoreText').value = '';
+    refreshBackupStatus();
+    backupOverlay.classList.add('open');
+  };
+  document.getElementById('backupClose').onclick = function () { backupOverlay.classList.remove('open'); };
+  backupOverlay.addEventListener('click', function (e) {
+    if (e.target === backupOverlay) backupOverlay.classList.remove('open');
+  });
+  document.getElementById('downloadBackupBtn').onclick = downloadBackup;
+
+  document.getElementById('restoreFile').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () { showRestoreCandidate(String(reader.result)); };
+    reader.onerror = function () {
+      document.getElementById('restoreError').style.display = '';
+      document.getElementById('restoreError').textContent = 'Could not read that file.';
+    };
+    reader.readAsText(f);
+  });
+
+  var restoreTimer = null;
+  document.getElementById('restoreText').addEventListener('input', function (e) {
+    clearTimeout(restoreTimer);
+    var v = e.target.value;
+    restoreTimer = setTimeout(function () {
+      if (v.trim()) showRestoreCandidate(v);
+    }, 350);
+  });
+
+  document.getElementById('restoreMergeBtn').onclick = function () { doRestore('merge'); };
+  document.getElementById('restoreReplaceBtn').onclick = function () {
+    var n = weekKeys().length;
+    if (n && !window.confirm('Replace all ' + n + ' week' + (n === 1 ? '' : 's') + ' on this device with the backup? This cannot be undone.')) return;
+    doRestore('replace');
+  };
 
   /* ================= Shared ================= */
   function render() {

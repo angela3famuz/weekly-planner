@@ -6,6 +6,12 @@ time-block schedule, and a habit tracker. No build step, no dependencies, no bac
 **Your data never leaves your device.** Everything is stored in the browser's
 `localStorage`, keyed by week. Nothing is uploaded anywhere.
 
+> **Back it up, and install it.** Because the data is only in `localStorage`, two things
+> can lose it. iOS Safari deletes all script-writable storage after **7 days** without a
+> visit — a real risk for a *weekly* planner. Home-screen installs are exempt from that,
+> which is the main reason to install rather than use a tab. Either way, take a backup
+> (**⋯ → Download backup**) and keep the file somewhere safe.
+
 ## Running it
 
 Open `index.html` in a browser. That's it.
@@ -41,6 +47,22 @@ The planner never sees your photo. **Import shifts** walks you through a round t
 Shifts running past midnight are split into two blocks, one either side of 12am, and
 flagged `OVERNIGHT` in the preview. Shifts already on your schedule are marked
 *already added* and unticked by default.
+
+## Backup & restore
+
+**⋯ → Download backup** writes a JSON file holding every week, your habits and your
+categories. Inside an installed iOS web app it goes through the share sheet (*Save to
+Files*), because `<a download>` is unreliable there; everywhere else it downloads directly.
+
+Restoring takes a file or pasted text, tells you what's in it, then offers two choices:
+
+- **Merge** — adds only weeks you don't already have. A week on this device always wins;
+  nothing you have is overwritten. Habits are unioned.
+- **Replace all** — wipes every week here first, then restores. Asks for confirmation.
+
+Use this to move to a new phone, to recover after a wipe, or to carry entries from a
+Safari tab into the installed app (iOS keeps those two storage areas separate, so a
+one-time export/import is the only bridge).
 
 ## Layout
 
