@@ -6,6 +6,8 @@ import {
   pool, migrate,
   UPSERT_WEEK, UPSERT_SETTINGS,
   SELECT_CHANGED_WEEKS, SELECT_CHANGED_SETTINGS, SELECT_CURSOR,
+  INSERT_HISTORY, SELECT_PREV_WEEK_DOC, SELECT_PREV_SETTINGS_DOC,
+  SELECT_HISTORY, SELECT_HISTORY_DOC,
 } from './db.js';
 import {
   verifyPassphrase, newToken, storeToken, checkToken, revokeAllTokens, bearerFrom,
@@ -106,6 +108,8 @@ export function createApp(opts = {}) {
   });
 
   app.post('/sync', syncLimiter, requireAuth, handleSync);
+  app.get('/history', syncLimiter, requireAuth, handleHistoryList);
+  app.post('/restore', syncLimiter, requireAuth, handleRestore);
 
   // Never echo the request body: it is the user's schedule.
   app.use((err, _req, res, _next) => {
@@ -152,6 +156,16 @@ function validateSync(body, nowMs) {
   return null;
 }
 
+// updatedAt always differs between versions, so compare the content without it.
+function changedFrom(prevRow, incoming) {
+  if (!prevRow) return true;                       // first ever version
+  const strip = (o) => {
+    const { updatedAt, ...rest } = o || {};
+    return JSON.stringify(rest);
+  };
+  return strip(prevRow.doc) !== strip(incoming) || Boolean(prevRow.deleted) !== Boolean(incoming.deleted);
+}
+
 async function handleSync(req, res, next) {
   const body = req.body || {};
   const nowMs = Date.now();
@@ -169,12 +183,24 @@ async function handleSync(req, res, next) {
     const conflicts = [];
 
     for (const [weekIso, doc] of Object.entries(weeks)) {
+      // Read the outgoing version first so an unchanged re-sync does not append
+      // an identical history row. Same transaction as the upsert, so a version
+      // can never be recorded for a write that did not happen, nor lost for one
+      // that did.
+      const prev = await client.query(SELECT_PREV_WEEK_DOC, [weekIso]);
       const r = await client.query(UPSERT_WEEK, [weekIso, doc, Boolean(doc.deleted), doc.updatedAt]);
-      if (r.rowCount === 0) conflicts.push(weekIso);
+      if (r.rowCount === 0) { conflicts.push(weekIso); continue; }
+      if (changedFrom(prev.rows[0], doc)) {
+        await client.query(INSERT_HISTORY, ['week', weekIso, doc, Boolean(doc.deleted), doc.updatedAt]);
+      }
     }
     if (settings) {
+      const prev = await client.query(SELECT_PREV_SETTINGS_DOC);
       const r = await client.query(UPSERT_SETTINGS, [settings, settings.updatedAt]);
       if (r.rowCount === 0) conflicts.push('settings');
+      else if (changedFrom(prev.rows[0], settings)) {
+        await client.query(INSERT_HISTORY, ['settings', 'settings', settings, false, settings.updatedAt]);
+      }
     }
 
     const changed = await client.query(SELECT_CHANGED_WEEKS, [since]);
@@ -188,6 +214,72 @@ async function handleSync(req, res, next) {
     }
     if (changedSettings.rowCount) out.settings = changedSettings.rows[0].doc;
     res.json(out);
+  } catch (e) {
+    await client.query('rollback').catch(() => {});
+    next(e);
+  } finally {
+    client.release();
+  }
+}
+
+const MAX_HISTORY_PAGE = 200;
+
+// GET /history?ref=2026-07-13  ->  the versions available to restore
+async function handleHistoryList(req, res, next) {
+  try {
+    const ref = String(req.query.ref || '');
+    const kind = ref === 'settings' ? 'settings' : 'week';
+    if (kind === 'week' && !WEEK_KEY.test(ref)) {
+      return res.status(400).json({ error: 'bad_ref' });
+    }
+    const limit = Math.min(Number(req.query.limit) || 50, MAX_HISTORY_PAGE);
+    const { rows } = await pool.query(SELECT_HISTORY, [kind, ref, limit]);
+    res.json({
+      ref,
+      versions: rows.map((r) => ({
+        id: Number(r.id),
+        updatedAt: Number(r.updated_at),
+        recordedAt: r.recorded_at,
+        deleted: r.deleted,
+      })),
+    });
+  } catch (e) { next(e); }
+}
+
+/*
+ * POST /restore { id }
+ *
+ * Restoring does not rewrite history or reach into other devices — it writes the
+ * old content back as a NEW current version, stamped now so it wins
+ * last-write-wins and propagates on each device's next sync. The restore is
+ * itself recorded, so restoring the wrong thing is also undoable.
+ */
+async function handleRestore(req, res, next) {
+  const id = req.body && req.body.id;
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad_id' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const found = await client.query(SELECT_HISTORY_DOC, [id]);
+    if (!found.rowCount) {
+      await client.query('rollback');
+      return res.status(404).json({ error: 'no_such_version' });
+    }
+    const { kind, ref, doc, deleted } = found.rows[0];
+    const updatedAt = Date.now();
+    const restored = { ...doc, updatedAt };
+
+    if (kind === 'week') {
+      await client.query(UPSERT_WEEK, [ref, restored, deleted, updatedAt]);
+      await client.query(INSERT_HISTORY, ['week', ref, restored, deleted, updatedAt]);
+    } else {
+      await client.query(UPSERT_SETTINGS, [restored, updatedAt]);
+      await client.query(INSERT_HISTORY, ['settings', 'settings', restored, false, updatedAt]);
+    }
+    const cursor = await client.query(SELECT_CURSOR);
+    await client.query('commit');
+    res.json({ restored: { kind, ref, updatedAt }, now: Number(cursor.rows[0].cursor) });
   } catch (e) {
     await client.query('rollback').catch(() => {});
     next(e);

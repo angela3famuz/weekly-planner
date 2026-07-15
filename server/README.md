@@ -14,7 +14,35 @@ conflict model costs.
 | `GET /health` | `{ ok, configured }`. `configured:false` means `PASSPHRASE_HASH` is unset. |
 | `POST /auth` | `{ passphrase }` → `{ token }`. Rate limited to 5 per IP per 15 min, and 20 globally. |
 | `POST /sync` | `{ since, weeks, settings }` → `{ now, weeks, settings, conflicts }`. Bearer token. |
+| `GET /history?ref=2026-07-13` | Versions available to restore, newest first. `ref=settings` for habits/categories. |
+| `POST /restore` | `{ id }` from `/history`. Writes that version back as the current one. |
 | `DELETE /tokens` | Signs out every device. Bearer token. |
+
+## History — why sync alone is not a backup
+
+Sync is a *replica*, not an *archive*. Last-write-wins means a deletion is just another
+write that wins, and it propagates faithfully to every device. Without history, "I deleted
+a month of planning" is unrecoverable no matter how many devices are in sync.
+
+Every write that both **wins** and **changes something** is appended to `history`, which is
+never updated and never deleted by the app. Unchanged re-syncs are not recorded, so idle
+syncing does not pile up identical rows.
+
+Restoring rewrites nothing: it writes the old content back as a **new current version
+stamped now**, so it wins last-write-wins and reaches every device on its next sync. The
+restore is itself recorded — restoring the wrong thing is also undoable.
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://<service>.up.railway.app/history?ref=2026-07-13"
+
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"id":42}' "https://<service>.up.railway.app/restore"
+```
+
+Growth is small — a year of ordinary use is well under a megabyte — but unbounded by
+design. If it ever needs trimming, delete old rows by `recorded_at`; nothing depends on
+them being present.
 
 ## Set your passphrase
 

@@ -243,6 +243,26 @@ client doesn't have, the client would decline the older copy coming back (per th
 §6), and the two would sit permanently disagreeing with no error anywhere. A fast clock
 should break loudly and locally, not diverge quietly. Local editing carries on regardless.
 
+### Sync is a replica, not an archive — so history is not optional
+
+Last-write-wins means a **deletion is just another write that wins**. Delete a month of
+planning and sync does its job perfectly: it removes it from every device. Two devices in
+sync protect against losing a *device*, not against losing *data*. RAID is not a backup,
+and neither is this.
+
+So `history` (§5) is append-only: every write that wins *and* changes something is kept,
+never updated, never deleted by the app. Unchanged re-syncs are not recorded, so idle
+syncing does not accumulate identical rows.
+
+`POST /restore` rewrites nothing. It writes the old content back as a **new current version
+stamped now**, so it wins LWW and reaches every device on its next sync — no special path,
+no reaching into other devices. The restore is itself recorded, so restoring the wrong
+version is also undoable.
+
+This is what lets manual backups stop being the safety net. The occasional export is still
+worth keeping against a *different* failure — losing the server, or the account — but it is
+no longer the only thing standing between a mistake and permanent loss.
+
 ### "Replace all" restore vs sync
 
 Restoring a backup with **Replace all** deletes local weeks. Without tombstones the next
