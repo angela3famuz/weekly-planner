@@ -27,6 +27,21 @@ OS feature and need a native app to supply them.
 Note that an installed copy keeps its own `localStorage`, separate from the same page
 open in a normal browser tab. Entries made in one won't appear in the other.
 
+## Importing shifts from a photo
+
+The planner never sees your photo. **Import shifts** walks you through a round trip:
+
+1. *Copy prompt for Claude* — puts a ready-made prompt on your clipboard, including
+   the expected JSON shape and today's date (so weekday names resolve to real dates).
+2. Send that to Claude along with a photo of your schedule.
+3. Paste the reply back. Code fences, surrounding chat, curly quotes and trailing
+   commas are all tolerated — paste the whole reply if you like.
+4. Tick the shifts you want and add them.
+
+Shifts running past midnight are split into two blocks, one either side of 12am, and
+flagged `OVERNIGHT` in the preview. Shifts already on your schedule are marked
+*already added* and unticked by default.
+
 ## Layout
 
 | File | Purpose |
