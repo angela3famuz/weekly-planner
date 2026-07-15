@@ -47,9 +47,11 @@ them being present.
 ## Set your passphrase
 
 ```sh
-npm install
-npm run hash
+node tools/hash-passphrase.js
 ```
+
+**Nothing needs installing first.** The tool imports `kdf.js`, which is `node:crypto` and
+nothing else, precisely because this is the first thing anyone runs.
 
 It asks twice, echoes nothing, and prints a single `PASSPHRASE_HASH=…` line. **Your
 passphrase is never written to disk, printed, or sent anywhere** — only the hash is, and a
@@ -57,6 +59,24 @@ hash cannot be reversed. Paste that line into Railway and keep the passphrase in
 password manager: it cannot be recovered, and you need it on every device.
 
 Use a passphrase, not a PIN. It is the only thing between the internet and your schedule.
+
+### On Windows, if `npm` will not run
+
+```
+npm : File C:\Program Files\nodejs\npm.ps1 cannot be loaded because running
+scripts is disabled on this system.
+```
+
+PowerShell's execution policy blocks npm's `.ps1` wrapper. Nothing to do with this project.
+Either use **`npm.cmd`** instead of `npm` (`npm.cmd install`), which skips the wrapper, or
+allow local scripts once — this changes a security setting, so run it yourself and only if
+you are comfortable with it:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+`npm.cmd` is the smaller hammer. Either way, the hash step above needs neither.
 
 ## Run it locally
 
