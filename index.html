@@ -2,11 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#fbf8f3">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Planner">
+<meta name="description" content="A weekly planner with time blocking and habit tracking.">
+<link rel="manifest" href="manifest.webmanifest">
+<!-- iOS ignores the manifest icons and only accepts PNG here. -->
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23fbf8f3'/%3E%3Crect x='10' y='14' width='44' height='38' rx='6' fill='%23fffdf9' stroke='%233a3a3a' stroke-width='3'/%3E%3Crect x='10' y='14' width='44' height='9' rx='4' fill='%23f9c9cb'/%3E%3Crect x='17' y='30' width='13' height='6' rx='2' fill='%23b3ddd1'/%3E%3Crect x='17' y='40' width='20' height='6' rx='2' fill='%23cdb9ea'/%3E%3C/svg%3E">
 <title>Weekly Planner</title>
 <style>
   :root {
     color-scheme: light;
+
+    /* Palette */
     --pink: #f9c9cb;
     --pink-soft: #fbdcdd;
     --orange: #f6bd7d;
@@ -16,313 +28,591 @@
     --yellow: #ece87f;
     --yellow-soft: #f5f2c0;
     --gray: #d9d9d9;
-    --ink: #3a3a3a;
-    --line: #e4e0d8;
+    --bg: #fbf8f3;
     --card: #fffdf9;
+    --line: #e4e0d8;
     --green: #4f9e63;
     --green-bg: #6fbf82;
-    --red: #d95f5f;
+    --red: #cf5252;
     --red-bg: #e08a8a;
+
+    /* Text — each step tested for >=4.5:1 on --card */
+    --ink: #3a3a3a;
+    --ink-2: #6b6459;
+    --ink-3: #857d6e;
+
+    /* Fills */
+    --sunken: #f1ebdf;
+    --track: #eee7dc;
+
+    /* Spacing scale */
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+
+    /* Radii */
+    --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+
+    /* Elevation — warm-tinted rather than flat black */
+    --sh-1: 0 1px 2px rgba(74,64,48,.05), 0 2px 8px rgba(74,64,48,.05);
+    --sh-2: 0 2px 6px rgba(74,64,48,.10), 0 10px 28px rgba(74,64,48,.10);
+
+    --tap: 44px;
+    --pad: 12px; /* body gutter; the top bar bleeds out by exactly this much */
+    --safe-l: env(safe-area-inset-left, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
   }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
   body {
-    font-family: "Segoe UI", -apple-system, sans-serif;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     color: var(--ink);
-    background-color: #fbf8f3;
+    background-color: var(--bg);
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'%3E%3Cg opacity='0.35'%3E%3Cpolygon points='30,40 55,80 5,80' fill='%23f6bd7d'/%3E%3Crect x='180' y='30' width='18' height='18' fill='%23cdb9ea' transform='rotate(20 189 39)'/%3E%3Ccircle cx='120' cy='140' r='10' fill='%23d7df75'/%3E%3Cpolygon points='220,180 245,220 195,220' fill='%23f9c9cb'/%3E%3Crect x='60' y='190' width='16' height='16' fill='%23b3ddd1' transform='rotate(-15 68 198)'/%3E%3Ccircle cx='230' cy='90' r='7' fill='%23f9c9cb'/%3E%3Cpath d='M100 60 q10 -14 20 0 q10 14 20 0' stroke='%23cdb9ea' stroke-width='3' fill='none'/%3E%3Cline x1='150' y1='230' x2='175' y2='210' stroke='%233a3a3a' stroke-width='2'/%3E%3C/g%3E%3C/svg%3E");
-    padding: 22px 18px 60px;
     min-height: 100vh;
+    padding: 0 calc(var(--pad) + var(--safe-r)) calc(var(--s5) + var(--safe-b)) calc(var(--pad) + var(--safe-l));
+    -webkit-tap-highlight-color: transparent;
   }
   .planner { max-width: 1240px; margin: 0 auto; }
 
-  /* Header */
-  .header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+  /* Inputs are 16px on touch so iOS Safari does not zoom the page on focus. */
+  input, textarea, select, button { font-family: inherit; font-size: 16px; color: var(--ink); }
+
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
+
+  /* =========================================================
+     Top bar — sticky so week nav and tabs stay reachable
+     ========================================================= */
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    margin: 0 calc(-1 * (var(--pad) + var(--safe-r))) var(--s3) calc(-1 * (var(--pad) + var(--safe-l)));
+    padding: var(--s2) calc(var(--pad) + var(--safe-r)) var(--s2) calc(var(--pad) + var(--safe-l));
+    padding-top: calc(var(--s2) + env(safe-area-inset-top, 0px));
+    background: rgba(251,248,243,.88);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid transparent;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .topbar.stuck { border-bottom-color: var(--line); box-shadow: 0 4px 16px rgba(74,64,48,.06); }
+
+  /* Rows wrap on a phone and collapse onto one line once there is room:
+     [ title            camera ]      [ title  week-nav  camera ]
+     [ <  week label  >  Today ]  ->  [ tabs        progress    ]
+     [ tabs                     ]
+     [ progress                 ]                                   */
+  .topbar-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+  .topbar-row + .topbar-row { margin-top: var(--s2); }
+
   h1 {
+    flex: 1; min-width: 0; text-align: center;
     font-family: "Segoe Script", "Brush Script MT", cursive;
-    font-size: 44px; font-weight: 700; letter-spacing: 1px;
+    font-size: 25px; font-weight: 700; letter-spacing: .5px;
+    white-space: nowrap; line-height: 1.15;
   }
-  .week-nav { display: flex; align-items: center; gap: 10px; }
-  .week-nav button {
-    border: 2px solid var(--ink); background: var(--card); border-radius: 10px;
-    width: 36px; height: 36px; font-size: 16px; cursor: pointer; font-weight: 700;
-    transition: transform .1s;
-  }
-  .week-nav button:hover { transform: scale(1.08); background: var(--yellow-soft); }
-  .week-label { background: var(--pink); padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 14px; }
-  .today-btn { width: auto !important; padding: 0 12px; font-size: 13px !important; }
+  .topbar-spacer { visibility: hidden; pointer-events: none; }
+  /* Below ~360px the nowrap title cannot shrink and would run under the
+     Import button, so step the type down rather than let it collide. */
+  @media (max-width: 359px) { h1 { font-size: 21px; } }
 
-  /* Tabs */
-  .tabs { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; }
+  /* Week navigation — forced onto its own line while wrapping is on */
+  .week-nav {
+    display: flex; align-items: center; gap: var(--s2);
+    flex: 1 0 100%; order: 3; min-width: 0;
+  }
+  .nav-btn {
+    flex: none; width: var(--tap); height: 38px;
+    border: 2px solid var(--ink); background: var(--card); border-radius: var(--r-sm);
+    font-size: 15px; font-weight: 700; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .15s, transform .1s;
+  }
+  .nav-btn:active { transform: scale(.94); background: var(--yellow-soft); }
+  .week-label {
+    flex: 1; min-width: 0; text-align: center;
+    background: var(--pink); border-radius: var(--r-sm);
+    padding: 0 var(--s2); height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px; white-space: nowrap;
+  }
+  .today-btn {
+    flex: none; width: auto; padding: 0 var(--s3); height: 38px; font-size: 13px;
+    min-width: var(--tap);
+  }
+  .icon-btn {
+    flex: none; width: var(--tap); height: 38px;
+    border: 2px solid var(--ink); background: var(--purple); border-radius: var(--r-sm);
+    font-size: 16px; cursor: pointer; display: inline-flex; align-items: center;
+    justify-content: center; transition: transform .1s;
+  }
+  .icon-btn:active { transform: scale(.94); }
+  .icon-btn .icon-label { display: none; }
+
+  /* Tabs — segmented control */
+  .tabs {
+    display: flex; gap: 2px; padding: 3px;
+    background: var(--sunken); border: 2px solid var(--ink); border-radius: var(--r-md);
+    flex: 1; min-width: 0;
+  }
   .tab-btn {
-    border: 2px solid var(--ink); background: var(--card); border-radius: 10px 10px 0 0;
-    padding: 8px 22px; font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit;
-    border-bottom: none; opacity: .55;
+    flex: 1; border: none; background: transparent; border-radius: var(--r-sm);
+    padding: 0; height: 34px; font-size: 14px; font-weight: 700; cursor: pointer;
+    color: var(--ink-2); transition: background .18s, color .18s;
   }
-  .tab-btn.active { background: var(--teal); opacity: 1; }
-  .import-btn {
-    margin-left: auto; border: 2px solid var(--ink); background: var(--purple);
-    border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 700;
-    cursor: pointer; font-family: inherit;
-  }
-  .import-btn:hover { transform: scale(1.03); }
+  .tab-btn.active { background: var(--card); color: var(--ink); box-shadow: var(--sh-1); }
 
-  /* Productivity bar */
-  .progress-wrap { margin-bottom: 18px; background: var(--card); border-radius: 12px; padding: 12px 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .progress-bar { flex: 1; min-width: 160px; height: 14px; background: #eee7dc; border-radius: 7px; overflow: hidden; display: flex; }
+  /* Productivity — one compact line, its own row while wrapping is on.
+     The counts are nowrap and cannot shrink, so let them drop to a second
+     line rather than push the page wide on a 320-360px phone. */
+  .progress-wrap {
+    display: flex; align-items: center; gap: var(--s2);
+    flex: 1 0 100%; flex-wrap: wrap; row-gap: 2px;
+  }
+  .progress-bar {
+    flex: 1 1 40px; min-width: 40px; height: 8px; background: var(--track);
+    border-radius: 4px; overflow: hidden; display: flex;
+  }
   .progress-done { height: 100%; background: var(--green-bg); width: 0%; transition: width .4s; }
   .progress-missed { height: 100%; background: var(--red-bg); width: 0%; transition: width .4s; }
-  .progress-text { font-size: 13px; font-weight: 700; white-space: nowrap; }
-  .progress-detail { font-size: 12px; color: #8a8272; white-space: nowrap; }
-  .progress-detail b.g { color: var(--green); } .progress-detail b.r { color: var(--red); }
+  .progress-text { font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .progress-detail { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+  .progress-detail b.g { color: var(--green); }
+  .progress-detail b.r { color: var(--red); }
 
-  /* Layout */
-  .grid { display: grid; grid-template-columns: 290px 1fr; gap: 16px; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-
-  .card { background: var(--card); border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.06); overflow: hidden; }
+  /* =========================================================
+     Cards
+     ========================================================= */
+  .grid { display: grid; grid-template-columns: 1fr; gap: var(--s3); }
+  .card {
+    background: var(--card); border-radius: var(--r-md);
+    box-shadow: var(--sh-1); overflow: hidden;
+  }
   .card-head {
-    padding: 7px 12px; font-size: 12px; font-weight: 700; letter-spacing: 1.2px;
+    padding: var(--s2) var(--s3); font-size: 11px; font-weight: 800; letter-spacing: 1.2px;
     text-transform: uppercase; display: flex; justify-content: space-between; align-items: center;
   }
-  .card-body { padding: 10px 12px 14px; }
+  .card-body { padding: var(--s2) var(--s3) var(--s3); }
+  .sidebar { display: flex; flex-direction: column; gap: var(--s3); }
 
-  /* Sidebar */
-  .sidebar { display: flex; flex-direction: column; gap: 16px; }
   textarea {
     width: 100%; border: none; resize: vertical; background: transparent;
-    font-family: inherit; font-size: 14px; color: var(--ink); outline: none; line-height: 1.6;
+    outline: none; line-height: 1.55; font-size: 15px;
   }
   .focus-body { background: var(--pink-soft); }
-  .focus-body textarea { min-height: 110px; }
+  .focus-body textarea { min-height: 66px; }
+  ::placeholder { color: var(--ink-3); opacity: 1; }
 
-  /* Checklists & status */
-  .check-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); }
-  .check-item:last-of-type { border-bottom: none; }
-  .check-item .star { color: var(--lime); font-size: 15px; filter: saturate(1.4); }
-  .cbox {
-    width: 17px; height: 17px; min-width: 17px; border: 2px solid var(--ink); border-radius: 4px;
-    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
-    font-size: 11px; font-weight: 900; background: #fff; color: transparent; transition: all .15s;
-    font-family: inherit; line-height: 1;
+  /* =========================================================
+     Checklists — rows are >=44px so every control is tappable
+     ========================================================= */
+  .check-item {
+    display: flex; align-items: center; gap: var(--s2);
+    min-height: var(--tap); padding: var(--s1) 0;
+    border-bottom: 1px dashed var(--line);
   }
+  .check-item:last-of-type { border-bottom: none; }
+  .check-item .star { color: var(--lime); font-size: 15px; filter: saturate(1.4); flex: none; }
+
+  .cbox {
+    position: relative; flex: none;
+    width: 22px; height: 22px; border: 2px solid var(--ink); border-radius: 6px;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 900; background: #fff; color: transparent;
+    transition: background .15s, border-color .15s, transform .1s; line-height: 1;
+  }
+  /* Invisible hit area brings the target to 44px without changing layout. */
+  .cbox::before { content: ""; position: absolute; inset: -11px; }
+  .cbox:active { transform: scale(.9); }
   .cbox.done { background: var(--green-bg); border-color: var(--green-bg); color: #fff; }
   .cbox.missed { background: var(--red-bg); border-color: var(--red-bg); color: #fff; }
+
   .check-item input[type="text"], .task-input {
-    flex: 1; border: none; background: transparent; font-family: inherit;
-    font-size: 14px; color: var(--ink); outline: none; min-width: 0;
+    flex: 1; border: none; background: transparent; outline: none; min-width: 0;
+    font-size: 15px; padding: var(--s2) 0;
   }
   .st-done > input[type="text"], .st-done .task-input {
-    text-decoration: line-through; text-decoration-color: var(--green); text-decoration-thickness: 2px; opacity: .6;
+    text-decoration: line-through; text-decoration-color: var(--green); text-decoration-thickness: 2px; opacity: .55;
   }
   .st-missed > input[type="text"], .st-missed .task-input {
-    text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 2px; opacity: .55;
+    text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 2px; opacity: .5;
   }
+
+  /* Delete stays visible by default; only pointer devices hide-until-hover. */
   .del-btn {
-    border: none; background: none; color: #c9c2b6; cursor: pointer; font-size: 14px;
-    padding: 0 2px; visibility: hidden;
+    position: relative; flex: none;
+    border: none; background: none; color: var(--ink-3); cursor: pointer;
+    font-size: 15px; width: 30px; height: 30px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s;
   }
-  .check-item:hover .del-btn, .day-task:hover .del-btn { visibility: visible; }
-  .del-btn:hover { color: #e08a8a; }
-  .add-row { display: flex; gap: 8px; margin-top: 8px; }
+  .del-btn::before { content: ""; position: absolute; inset: -7px; }
+  .del-btn:active { background: var(--pink-soft); color: var(--red); }
+
+  .add-row { display: flex; gap: var(--s2); margin-top: var(--s2); }
   .add-row input {
-    flex: 1; border: 1px dashed #cfc8ba; border-radius: 8px; padding: 6px 10px;
-    font-family: inherit; font-size: 13px; outline: none; background: #fff;
+    flex: 1; min-height: var(--tap);
+    border: 1.5px dashed #cfc8ba; border-radius: var(--r-sm);
+    padding: var(--s2) var(--s3); outline: none; background: #fff; font-size: 15px;
   }
   .add-row input:focus { border-color: var(--teal); border-style: solid; }
 
-  /* Day cards */
-  .days { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-  @media (max-width: 1100px) { .days { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 600px) { .days { grid-template-columns: 1fr; } }
-  .day-card .card-head span.date { font-weight: 500; text-transform: none; letter-spacing: 0; }
-  .day-card.today-card { outline: 3px solid var(--ink); outline-offset: -1px; }
-  .day-card .card-body { min-height: 120px; padding: 6px 10px 10px; }
-  .day-task { display: flex; align-items: center; gap: 7px; padding: 4px 0; border-bottom: 1px solid #f1ece2; font-size: 13px; }
-  .day-task .cbox { width: 15px; height: 15px; min-width: 15px; font-size: 10px; }
-  .day-task .block-time {
-    font-size: 10px; font-weight: 700; color: #9a8f76; white-space: nowrap;
-    background: #f4eee1; border-radius: 4px; padding: 1px 4px;
+  /* =========================================================
+     Day cards
+     ========================================================= */
+  .days { display: grid; grid-template-columns: 1fr; gap: var(--s2); }
+  .day-card .card-head span.date { font-weight: 600; text-transform: none; letter-spacing: 0; }
+  .day-card.today-card { box-shadow: 0 0 0 2.5px var(--ink), var(--sh-2); }
+  .day-card .card-body { min-height: 0; padding: var(--s1) var(--s3) var(--s2); }
+  .today-pill {
+    background: var(--ink); color: var(--card); border-radius: 999px;
+    font-size: 9px; letter-spacing: .8px; padding: 2px 7px; margin-left: var(--s2);
   }
-  .day-task .block-chip { width: 4px; align-self: stretch; border-radius: 2px; min-height: 16px; }
-  .day-add {
-    width: 100%; border: none; background: transparent; font-family: inherit; font-size: 13px;
-    outline: none; padding: 6px 0 2px; color: var(--ink);
-  }
-  .day-add::placeholder { color: #c9c2b6; }
 
-  /* Habit tracker */
-  .bottom { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; margin-top: 16px; }
-  @media (max-width: 900px) { .bottom { grid-template-columns: 1fr; } }
-  table.habits { width: 100%; border-collapse: collapse; }
-  table.habits th { font-size: 11px; font-weight: 700; padding: 4px 3px; text-align: center; }
-  table.habits th:first-child { text-align: left; }
-  table.habits td { padding: 4px 3px; text-align: center; border-top: 1px dashed var(--line); }
-  table.habits td:first-child { text-align: left; font-size: 13px; }
-  .habit-name { display: flex; align-items: center; gap: 4px; }
-  .habit-name input { border: none; background: transparent; font-family: inherit; font-size: 13px; outline: none; width: 100%; }
+  .day-task {
+    display: flex; align-items: center; gap: var(--s2);
+    min-height: var(--tap); padding: var(--s1) 0;
+    border-bottom: 1px solid #f4efe6; font-size: 15px;
+  }
+  .day-task:last-of-type { border-bottom: none; }
+  .day-task .block-time {
+    flex: none;
+    font-size: 11px; font-weight: 700; color: var(--ink-2); white-space: nowrap;
+    background: var(--sunken); border-radius: 5px; padding: 3px 6px;
+  }
+  .day-task .block-chip { flex: none; width: 4px; align-self: stretch; border-radius: 2px; min-height: 20px; }
+  .day-add {
+    width: 100%; border: none; background: transparent; outline: none;
+    min-height: 40px; font-size: 15px; color: var(--ink);
+  }
+
+  /* =========================================================
+     Habits
+     ========================================================= */
+  .bottom { display: grid; grid-template-columns: 1fr; gap: var(--s3); margin-top: var(--s3); }
+  table.habits { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.habits th {
+    font-size: 11px; font-weight: 800; padding: var(--s1) 0; text-align: center; color: var(--ink-2);
+  }
+  table.habits th:first-child, table.habits td:first-child { text-align: left; width: auto; }
+  table.habits th:not(:first-child), table.habits td:not(:first-child) { width: 34px; }
+  table.habits th:last-child, table.habits td:last-child { width: 34px; }
+  table.habits td { padding: var(--s1) 0; text-align: center; border-top: 1px dashed var(--line); }
+  .habit-name { display: flex; align-items: center; }
+  .habit-name input {
+    border: none; background: transparent; outline: none; width: 100%;
+    font-size: 15px; padding: var(--s2) var(--s2) var(--s2) 0; min-height: var(--tap);
+  }
   .hcell {
-    width: 20px; height: 20px; border-radius: 5px; border: none; cursor: pointer;
+    position: relative;
+    width: 28px; height: 28px; border-radius: var(--r-sm); border: none; cursor: pointer;
     background: #efe9dd; transition: transform .1s;
   }
-  .hcell:hover { transform: scale(1.15); }
+  .hcell::before { content: ""; position: absolute; inset: -8px; }
+  .hcell:active { transform: scale(.88); }
   .hcell.h0 { background-color: var(--teal); } .hcell.h1 { background-color: var(--orange); }
   .hcell.h2 { background-color: var(--purple); } .hcell.h3 { background-color: var(--pink); }
   .hcell.h4 { background-color: var(--lime); } .hcell.h5 { background-color: var(--yellow); }
   .hcell:not(.on) { background-color: #efe9dd !important; }
 
   .notes-body { background: var(--yellow-soft); }
-  .notes-body textarea { min-height: 150px; }
-  .motto { text-align: right; font-size: 10px; font-weight: 800; letter-spacing: 1px; padding: 0 12px 10px; color: #8a8468; }
+  .notes-body textarea { min-height: 96px; }
+  .motto {
+    text-align: right; font-size: 9px; font-weight: 800; letter-spacing: 1px;
+    padding: 0 var(--s3) var(--s2); color: #7d7757;
+  }
 
-  /* Header color assignments */
+  /* Card head colors */
   .hd-pink { background: var(--pink); } .hd-orange { background: var(--orange); }
   .hd-teal { background: var(--teal); } .hd-purple { background: var(--purple); }
   .hd-lime { background: var(--lime); } .hd-yellow { background: var(--yellow); }
   .hd-gray { background: var(--gray); } .hd-pinksoft { background: var(--pink-soft); }
 
-  /* ===== Schedule (time-block) view ===== */
-  .sched-card { background: var(--card); border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 14px; overflow-x: auto; }
-  .sched-hint { font-size: 12px; color: #9a927f; margin-bottom: 10px; }
-  .sched-grid { display: grid; grid-template-columns: 52px repeat(7, minmax(120px, 1fr)); min-width: 940px; }
-  .sched-head {
-    padding: 6px 8px; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
-    text-align: center; border-radius: 8px 8px 0 0; margin: 0 2px;
+  /* =========================================================
+     Schedule
+     ========================================================= */
+  .sched-card {
+    background: var(--card); border-radius: var(--r-md);
+    box-shadow: var(--sh-1); padding: var(--s3);
   }
-  .sched-head .date { font-weight: 500; letter-spacing: 0; text-transform: none; margin-left: 4px; }
-  .sched-head.today-col { outline: 3px solid var(--ink); outline-offset: -2px; }
+  .sched-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .sched-hint { font-size: 12px; color: var(--ink-2); margin-bottom: var(--s2); line-height: 1.5; }
+
+  /* Day strip — phone day switcher */
+  .day-strip { display: flex; gap: var(--s1); margin-bottom: var(--s3); }
+  .day-pip {
+    flex: 1; min-width: 0; border: 2px solid transparent; background: var(--sunken);
+    border-radius: var(--r-sm); padding: var(--s2) 0 var(--s1); cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    min-height: var(--tap); transition: background .15s, border-color .15s;
+  }
+  .day-pip .dp-dow { font-size: 11px; font-weight: 800; letter-spacing: .5px; color: var(--ink-2); }
+  .day-pip .dp-date { font-size: 13px; font-weight: 700; }
+  .day-pip .dp-dots { display: flex; gap: 2px; height: 5px; align-items: center; }
+  .day-pip .dp-dot { width: 4px; height: 4px; border-radius: 50%; }
+  .day-pip.today { border-color: var(--ink); }
+  .day-pip.sel { background: var(--teal); }
+  .day-pip.sel .dp-dow { color: var(--ink); }
+
+  .sched-grid { display: grid; grid-template-columns: 52px 1fr; }
+  .sched-head {
+    padding: var(--s2) var(--s1); font-size: 12px; font-weight: 800; letter-spacing: 1px;
+    text-transform: uppercase; text-align: center; border-radius: var(--r-sm) var(--r-sm) 0 0;
+    margin: 0 2px;
+  }
+  .sched-head .date { font-weight: 600; letter-spacing: 0; text-transform: none; margin-left: var(--s1); }
+  .sched-head.today-col { box-shadow: inset 0 0 0 2.5px var(--ink); }
   .time-col { position: relative; }
   .time-label {
-    position: absolute; right: 8px; transform: translateY(-7px);
-    font-size: 11px; font-weight: 600; color: #9a927f;
+    position: absolute; right: var(--s2); transform: translateY(-7px);
+    font-size: 11px; font-weight: 700; color: var(--ink-2);
   }
+  /* touch-action only constrains touch input, never the mouse. pan-y keeps the
+     page scrollable under a finger while leaving mouse drag-to-create intact;
+     touch dragging is delegated to the explicit grip and resize handles. */
   .day-col {
-    position: relative; margin: 0 2px; border-radius: 0 0 6px 6px;
+    position: relative; margin: 0 2px; border-radius: 0 0 var(--r-sm) var(--r-sm);
     background: #fdfaf4;
     background-image: repeating-linear-gradient(to bottom, transparent, transparent 47px, #e9e2d4 47px, #e9e2d4 48px);
-    cursor: crosshair; touch-action: none;
+    touch-action: pan-y;
   }
   .day-col.today-col { background-color: #fcf6e8; }
 
   .tblock {
-    position: absolute; left: 3px; right: 3px; border-radius: 8px; overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0,0,0,.15); cursor: grab; touch-action: none;
-    display: flex; flex-direction: column; padding: 4px 6px 8px; min-height: 22px;
-    border-left: 4px solid rgba(0,0,0,.18);
+    position: absolute; left: 3px; right: 3px; border-radius: var(--r-sm); overflow: hidden;
+    box-shadow: 0 1px 3px rgba(74,64,48,.18); touch-action: pan-y;
+    display: flex; flex-direction: column; padding: var(--s1) var(--s2) var(--s2);
+    min-height: 26px; border-left: 4px solid rgba(0,0,0,.18);
   }
-  .tblock:active { cursor: grabbing; }
-  .tb-row { display: flex; align-items: center; gap: 4px; }
+  .tb-row { display: flex; align-items: center; gap: var(--s1); }
   .tblock input {
-    border: none; background: transparent; font-family: inherit; font-size: 12px; font-weight: 700;
-    color: var(--ink); outline: none; width: 100%; pointer-events: auto; flex: 1; min-width: 0;
+    border: none; background: transparent; font-size: 13px; font-weight: 700;
+    outline: none; width: 100%; flex: 1; min-width: 0; padding: 2px 0;
   }
-  .tblock.st-done { opacity: .75; }
+  .tblock.st-done { opacity: .78; }
   .tblock.st-done input { text-decoration: line-through; text-decoration-color: var(--green); text-decoration-thickness: 2px; }
-  .tblock.st-missed { opacity: .65; }
+  .tblock.st-missed { opacity: .66; }
   .tblock.st-missed input { text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 2px; }
+  .tblock.sel { box-shadow: 0 0 0 2.5px var(--ink), 0 4px 14px rgba(74,64,48,.2); }
+
   .tb-status {
-    width: 15px; height: 15px; min-width: 15px; border: 2px solid rgba(58,58,58,.55); border-radius: 50%;
-    background: rgba(255,255,255,.7); cursor: pointer; font-size: 9px; font-weight: 900;
-    color: transparent; display: inline-flex; align-items: center; justify-content: center; padding: 0; line-height: 1;
+    position: relative; flex: none;
+    width: 20px; height: 20px; border: 2px solid rgba(58,58,58,.55); border-radius: 50%;
+    background: rgba(255,255,255,.75); cursor: pointer; font-size: 11px; font-weight: 900;
+    color: transparent; display: inline-flex; align-items: center; justify-content: center;
+    padding: 0; line-height: 1;
   }
+  .tb-status::before { content: ""; position: absolute; inset: -12px; }
   .tb-status.done { background: var(--green-bg); border-color: var(--green-bg); color: #fff; }
   .tb-status.missed { background: var(--red-bg); border-color: var(--red-bg); color: #fff; }
-  .tb-time { font-size: 10px; font-weight: 600; color: rgba(58,58,58,.65); margin-left: 19px; }
-  .tb-del {
-    position: absolute; top: 2px; right: 3px; border: none; background: none; cursor: pointer;
-    font-size: 11px; color: rgba(58,58,58,.45); display: none; padding: 1px 3px;
+  .tb-time { font-size: 11px; font-weight: 600; color: rgba(58,58,58,.7); margin-left: 24px; }
+
+  /* Block actions: revealed by selection on touch, by hover on pointer devices. */
+  .tb-actions { position: absolute; top: 2px; right: 2px; display: none; gap: 2px; }
+  .tblock.sel .tb-actions { display: flex; }
+  .tb-del, .tb-grip {
+    border: none; background: rgba(255,255,255,.65); cursor: pointer;
+    font-size: 12px; color: rgba(58,58,58,.75);
+    width: 26px; height: 26px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0;
   }
-  .tblock:hover .tb-del { display: block; }
-  .tb-del:hover { color: #b34a4a; }
-  .tb-colors { position: absolute; bottom: 8px; right: 5px; display: none; gap: 3px; }
-  .tblock:hover .tb-colors { display: flex; }
-  .tb-dot { width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(0,0,0,.25); cursor: pointer; padding: 0; }
+  /* The grip is the touch drag target, so it must not pan the page. */
+  .tb-grip { cursor: grab; touch-action: none; font-size: 13px; }
+  .tb-grip:active { cursor: grabbing; }
+
+  .tb-colors { position: absolute; bottom: 20px; right: var(--s2); display: none; gap: var(--s1); }
+  .tblock.sel .tb-colors { display: flex; }
+  .tb-dot {
+    position: relative; width: 18px; height: 18px; border-radius: 50%;
+    border: 1.5px solid rgba(0,0,0,.25); cursor: pointer; padding: 0;
+  }
+  .tb-dot::before { content: ""; position: absolute; inset: -5px; }
   .tb-resize {
-    position: absolute; bottom: 0; left: 0; right: 0; height: 8px; cursor: ns-resize;
+    position: absolute; bottom: 0; left: 0; right: 0; height: 16px;
+    cursor: ns-resize; touch-action: none;
   }
   .tb-resize::after {
-    content: ""; display: block; width: 26px; height: 3px; border-radius: 2px;
-    background: rgba(0,0,0,.18); margin: 2px auto 0;
+    content: ""; display: block; width: 30px; height: 4px; border-radius: 2px;
+    background: rgba(0,0,0,.22); margin: 6px auto 0;
   }
-  .tblock.ghost { opacity: .65; pointer-events: none; }
+  /* Short blocks cannot fit stacked controls; drop the dots rather than overlap. */
+  .tblock.short .tb-colors { display: none !important; }
+  .tblock.ghost { opacity: .6; pointer-events: none; }
 
   /* Category legend */
-  .legend { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
-  .legend-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9a927f; margin-right: 2px; }
+  .legend { display: flex; gap: var(--s2); margin-bottom: var(--s3); flex-wrap: wrap; align-items: center; }
+  .legend-title {
+    font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--ink-2); width: 100%;
+  }
   .cat-chip {
-    display: flex; align-items: center; gap: 6px; border: 2px solid transparent;
-    border-radius: 8px; padding: 4px 10px; background: #f1ebdf; cursor: pointer;
+    display: flex; align-items: center; gap: var(--s2); border: 2px solid transparent;
+    border-radius: var(--r-sm); padding: var(--s1) var(--s3); background: var(--sunken);
+    cursor: pointer; min-height: 38px;
   }
   .cat-chip.active { border-color: var(--ink); background: #fff; }
-  .cat-swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); }
+  .cat-swatch { flex: none; width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); }
   .cat-chip input {
-    border: none; background: transparent; font-family: inherit; font-size: 12px;
-    font-weight: 700; width: 72px; outline: none; color: var(--ink); cursor: pointer;
+    border: none; background: transparent; font-size: 14px; font-weight: 700;
+    width: 66px; outline: none; cursor: pointer;
   }
-  .legend-hint { font-size: 11px; color: #b3ab99; }
+  .legend-hint { font-size: 11px; color: var(--ink-3); width: 100%; }
 
-  /* ===== Import modal ===== */
+  /* =========================================================
+     Import modal — full-height sheet on phone
+     ========================================================= */
   .overlay {
     position: fixed; inset: 0; background: rgba(58,58,58,.45); display: none;
-    align-items: flex-start; justify-content: center; z-index: 50; padding: 40px 16px; overflow: auto;
+    align-items: flex-end; justify-content: center; z-index: 50; overflow: auto;
   }
   .overlay.open { display: flex; }
   .modal {
-    background: var(--card); border-radius: 14px; max-width: 600px; width: 100%;
-    padding: 20px; box-shadow: 0 8px 30px rgba(0,0,0,.25);
+    background: var(--card); border-radius: var(--r-lg) var(--r-lg) 0 0; max-width: 600px; width: 100%;
+    padding: var(--s4) var(--s4) calc(var(--s4) + var(--safe-b));
+    box-shadow: 0 -8px 30px rgba(0,0,0,.25); max-height: 92vh; overflow: auto;
   }
-  .modal h2 { font-size: 18px; margin-bottom: 8px; }
-  .modal p { font-size: 13px; color: #8a8272; margin-bottom: 10px; line-height: 1.5; }
+  .modal h2 { font-size: 18px; margin-bottom: var(--s2); }
+  .modal p { font-size: 14px; color: var(--ink-2); margin-bottom: var(--s2); line-height: 1.55; }
   .modal p b { color: var(--ink); }
   .modal textarea {
-    border: 1px dashed #cfc8ba; border-radius: 8px; padding: 8px; font-size: 12px;
-    font-family: Consolas, monospace; min-height: 90px; background: #fff; resize: vertical;
+    border: 1.5px dashed #cfc8ba; border-radius: var(--r-sm); padding: var(--s2);
+    font-size: 13px; font-family: Consolas, monospace; min-height: 84px; background: #fff; resize: vertical;
   }
-  .modal-btns { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; }
+  .modal-btns {
+    display: flex; gap: var(--s2); margin-top: var(--s4); justify-content: flex-end; flex-wrap: wrap;
+  }
   .btn {
-    border: 2px solid var(--ink); background: var(--card); border-radius: 10px;
-    padding: 7px 16px; font-weight: 700; font-size: 13px; cursor: pointer; font-family: inherit;
+    border: 2px solid var(--ink); background: var(--card); border-radius: var(--r-sm);
+    padding: 0 var(--s4); min-height: var(--tap); font-weight: 700; font-size: 14px; cursor: pointer;
   }
   .btn.primary { background: var(--teal); }
   .btn:disabled { opacity: .4; cursor: default; }
-  .import-error { color: var(--red); font-size: 12px; font-weight: 600; margin-top: 8px; white-space: pre-line; }
-  .import-success { color: var(--green); font-size: 13px; font-weight: 700; margin-top: 8px; }
-  .prev-list { margin-top: 12px; max-height: 320px; overflow: auto; }
-  .prev-item { display: flex; gap: 9px; align-items: center; padding: 7px 4px; border-bottom: 1px dashed var(--line); font-size: 13px; }
-  .prev-item input[type="checkbox"] { width: 16px; height: 16px; accent-color: #6fbf82; }
-  .prev-date { font-weight: 700; white-space: nowrap; min-width: 86px; }
-  .prev-time { background: #f4eee1; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 700; color: #9a8f76; white-space: nowrap; }
-  .prev-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .import-error { color: var(--red); font-size: 13px; font-weight: 600; margin-top: var(--s2); white-space: pre-line; }
+  .import-success { color: var(--green); font-size: 14px; font-weight: 700; margin-top: var(--s2); }
+  .prev-list { margin-top: var(--s3); max-height: 40vh; overflow: auto; }
+  .prev-item {
+    display: flex; gap: var(--s2); align-items: center; padding: var(--s2) var(--s1);
+    border-bottom: 1px dashed var(--line); font-size: 14px; min-height: var(--tap);
+  }
+  .prev-item input[type="checkbox"] { flex: none; width: 22px; height: 22px; accent-color: #6fbf82; }
+  .prev-date { font-weight: 700; white-space: nowrap; min-width: 74px; }
+  .prev-time {
+    background: var(--sunken); border-radius: 4px; padding: 2px var(--s2);
+    font-size: 11px; font-weight: 700; color: var(--ink-2); white-space: nowrap;
+  }
+  .prev-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .prev-dup { color: var(--red); font-size: 11px; font-weight: 700; white-space: nowrap; }
-  .prev-week { font-size: 11px; font-weight: 700; color: #9a8f76; margin: 10px 0 2px; text-transform: uppercase; letter-spacing: 1px; }
+  .prev-week {
+    font-size: 11px; font-weight: 800; color: var(--ink-2); margin: var(--s3) 0 2px;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  /* =========================================================
+     Pointer devices — hover reveals, tighter type
+     ========================================================= */
+  @media (hover: hover) and (pointer: fine) {
+    .del-btn { visibility: hidden; }
+    .check-item:hover .del-btn, .day-task:hover .del-btn, .habits tr:hover .del-btn { visibility: visible; }
+    .del-btn:hover { background: var(--pink-soft); color: var(--red); }
+    .nav-btn:hover, .today-btn:hover { background: var(--yellow-soft); }
+    .icon-btn:hover { transform: scale(1.04); }
+    .tab-btn:not(.active):hover { color: var(--ink); }
+    .hcell:hover { transform: scale(1.12); }
+    .tblock:hover .tb-actions { display: flex; }
+    .tblock:hover .tb-colors { display: flex; }
+    .tb-del:hover { color: var(--red); background: #fff; }
+    .day-col { cursor: crosshair; }
+    .tblock { cursor: grab; }
+    .tblock:active { cursor: grabbing; }
+    /* A mouse can drag the block body directly, so the grip is redundant. */
+    .tb-grip { display: none; }
+    .day-pip:hover { background: var(--yellow-soft); }
+  }
+
+  /* =========================================================
+     Tablet and up
+     ========================================================= */
+  @media (min-width: 700px) {
+    :root { --pad: 16px; }
+    body { padding-bottom: 40px; }
+    h1 { font-size: 30px; }
+    .topbar { padding-top: var(--s3); padding-bottom: var(--s3); }
+    .week-label { min-width: 168px; font-size: 14px; }
+    .tabs { flex: none; width: 260px; }
+    .icon-btn { width: auto; padding: 0 var(--s3); gap: var(--s2); }
+    .icon-btn .icon-label { display: inline; font-size: 13px; font-weight: 700; }
+    .progress-wrap { gap: var(--s3); }
+    .days { grid-template-columns: repeat(2, 1fr); gap: var(--s3); }
+    .day-card .card-body { min-height: 96px; }
+    .bottom { grid-template-columns: 1.5fr 1fr; }
+    .focus-body textarea { min-height: 90px; }
+    .notes-body textarea { min-height: 130px; }
+    .overlay { align-items: flex-start; padding: 40px var(--s4); }
+    .modal { border-radius: var(--r-lg); box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+    .legend-title, .legend-hint { width: auto; }
+    .legend-hint { margin-left: auto; }
+    .day-strip { display: none; }
+    .sched-grid { grid-template-columns: 52px repeat(7, minmax(118px, 1fr)); min-width: 900px; }
+  }
+
+  /* Only once the title, week nav and Import button genuinely fit side by side.
+     The title shares the row here, so it sits left and needs no balancing. */
+  @media (min-width: 900px) {
+    .topbar-spacer { display: none; }
+    h1 { flex: none; font-size: 34px; }
+    .topbar-row { flex-wrap: nowrap; gap: var(--s3); }
+    .week-nav { flex: none; order: 0; margin-left: auto; }
+    .week-label { flex: none; }
+    .progress-wrap { flex: 1; }
+  }
+
+  @media (min-width: 1000px) {
+    .grid { grid-template-columns: 300px 1fr; gap: var(--s4); }
+    .days { grid-template-columns: repeat(4, 1fr); }
+    .check-item, .day-task { min-height: 0; }
+    .check-item input[type="text"], .task-input { font-size: 14px; padding: var(--s1) 0; }
+    .day-task { font-size: 14px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+  }
 </style>
 </head>
 <body>
 <div class="planner">
-  <div class="header">
-    <h1>Weekly Planner</h1>
-    <div class="week-nav">
-      <button id="prevBtn" title="Previous week">&#8592;</button>
-      <div class="week-label" id="weekLabel"></div>
-      <button id="nextBtn" title="Next week">&#8594;</button>
-      <button class="today-btn" id="todayBtn">Today</button>
+  <header class="topbar" id="topbar">
+    <div class="topbar-row main">
+      <!-- Invisible twin of the Import button: balances the row so the title
+           lands on the true centre rather than 22px left of it. -->
+      <span class="icon-btn topbar-spacer" aria-hidden="true">&#128247;<span class="icon-label">Import shifts</span></span>
+      <h1>Weekly Planner</h1>
+      <div class="week-nav">
+        <button class="nav-btn" id="prevBtn" aria-label="Previous week">&#8592;</button>
+        <div class="week-label" id="weekLabel"></div>
+        <button class="nav-btn" id="nextBtn" aria-label="Next week">&#8594;</button>
+        <button class="nav-btn today-btn" id="todayBtn">Today</button>
+      </div>
+      <button class="icon-btn" id="importBtn" aria-label="Import shifts from a photo">
+        &#128247;<span class="icon-label">Import shifts</span>
+      </button>
     </div>
-  </div>
 
-  <div class="tabs">
-    <button class="tab-btn active" id="tabPlanner">Planner</button>
-    <button class="tab-btn" id="tabSchedule">Schedule</button>
-    <button class="import-btn" id="importBtn">&#128247; Import shifts</button>
-  </div>
-
-  <div class="progress-wrap">
-    <span class="progress-text">Productivity</span>
-    <div class="progress-bar">
-      <div class="progress-done" id="progressDone"></div>
-      <div class="progress-missed" id="progressMissed"></div>
+    <div class="topbar-row sub">
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" id="tabPlanner" role="tab">Planner</button>
+        <button class="tab-btn" id="tabSchedule" role="tab">Schedule</button>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-bar">
+          <div class="progress-done" id="progressDone"></div>
+          <div class="progress-missed" id="progressMissed"></div>
+        </div>
+        <span class="progress-text" id="progressText">0%</span>
+        <span class="progress-detail" id="progressDetail"></span>
+      </div>
     </div>
-    <span class="progress-text" id="progressText">0%</span>
-    <span class="progress-detail" id="progressDetail"></span>
-  </div>
+  </header>
 
   <div id="plannerView">
     <div class="grid">
@@ -377,8 +667,11 @@
   <div id="scheduleView" style="display:none">
     <div class="sched-card">
       <div class="legend" id="catLegend"></div>
-      <div class="sched-hint">Click or drag on a day to create a time block (uses the selected category) · drag to move · drag the bottom handle to resize · click the circle to mark done ✓ / missed ✕ · hover a block to recolor or delete · &#128247; Import shifts to add your work schedule from a photo</div>
-      <div class="sched-grid" id="schedGrid"></div>
+      <div class="day-strip" id="dayStrip"></div>
+      <div class="sched-hint" id="schedHint"></div>
+      <div class="sched-scroll">
+        <div class="sched-grid" id="schedGrid"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -442,6 +735,11 @@
   var PX_PER_MIN = 0.8, SNAP = 30;
   var DEFAULT_START = 480, DEFAULT_END = 1200; // 8am - 8pm
   var dayStartMin = DEFAULT_START, dayEndMin = DEFAULT_END;
+
+  // Phones show one day at a time; 7 columns will not fit under ~700px.
+  var wideMQ = window.matchMedia('(min-width: 700px)');
+  function isWide() { return wideMQ.matches; }
+  var selectedDay = null; // set on load to today (or Monday)
 
   function mondayOf(d) {
     var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -541,11 +839,16 @@
     DAY_DEFS.forEach(function (def, idx) {
       var card = el('div', 'card day-card');
       var head = el('div', 'card-head ' + def.color);
-      head.appendChild(el('span', null, def.label));
+      var title = el('span', null, def.label);
+      head.appendChild(title);
       if (def.key !== 'next') {
         var d = new Date(weekStart); d.setDate(d.getDate() + idx);
         head.appendChild(el('span', 'date', fmt(d)));
-        if (iso(d) === todayIso) card.classList.add('today-card');
+        if (iso(d) === todayIso) {
+          card.classList.add('today-card');
+          card.id = 'todayCard';
+          title.appendChild(el('span', 'today-pill', 'TODAY'));
+        }
       }
       card.appendChild(head);
       var body = el('div', 'card-body');
@@ -733,20 +1036,88 @@
     if (!sel.value) sel.selectedIndex = 0;
   }
 
+  // Index of a day key within the Mon-Sun week.
+  function dayIndex(key) {
+    for (var i = 0; i < SCHED_DAYS.length; i++) if (SCHED_DAYS[i].key === key) return i;
+    return 0;
+  }
+  function dateOfDay(key) {
+    var d = new Date(weekStart);
+    d.setDate(d.getDate() + dayIndex(key));
+    return d;
+  }
+  // Today's key if today falls in the displayed week, else null.
+  function todayKeyInWeek() {
+    var todayIso = iso(new Date());
+    for (var i = 0; i < SCHED_DAYS.length; i++) {
+      var d = new Date(weekStart); d.setDate(d.getDate() + i);
+      if (iso(d) === todayIso) return SCHED_DAYS[i].key;
+    }
+    return null;
+  }
+  function ensureSelectedDay() {
+    var valid = SCHED_DAYS.some(function (x) { return x.key === selectedDay; });
+    if (!valid) selectedDay = todayKeyInWeek() || 'mon';
+  }
+  function visibleDays() {
+    if (isWide()) return SCHED_DAYS;
+    ensureSelectedDay();
+    return SCHED_DAYS.filter(function (x) { return x.key === selectedDay; });
+  }
+
+  function renderDayStrip() {
+    var strip = document.getElementById('dayStrip');
+    strip.innerHTML = '';
+    ensureSelectedDay();
+    var todayKey = todayKeyInWeek();
+    SCHED_DAYS.forEach(function (def) {
+      var d = dateOfDay(def.key);
+      var pip = el('button', 'day-pip' + (def.key === selectedDay ? ' sel' : '') + (def.key === todayKey ? ' today' : ''));
+      pip.appendChild(el('span', 'dp-dow', def.label.slice(0, 1)));
+      pip.appendChild(el('span', 'dp-date', String(d.getDate())));
+      // Up to three dots hint at how full the day already is.
+      var dots = el('div', 'dp-dots');
+      data.blocks
+        .filter(function (b) { return b.day === def.key; })
+        .slice(0, 3)
+        .forEach(function (b) {
+          var dot = el('span', 'dp-dot');
+          dot.style.background = b.color;
+          dots.appendChild(dot);
+        });
+      pip.appendChild(dots);
+      pip.onclick = function () {
+        selectedDay = def.key;
+        buildScheduleGrid();
+      };
+      strip.appendChild(pip);
+    });
+  }
+
+  function renderSchedHint() {
+    // Touch cannot drag-to-create: that gesture is reserved for scrolling the page.
+    document.getElementById('schedHint').textContent = isWide()
+      ? 'Click or drag on a day to create a time block · drag to move · drag the bottom handle to resize · click the circle to mark done ✓ / missed ✕ · hover a block to recolor or delete'
+      : 'Tap the timeline to add an hour block · tap a block to select it, then drag ✥ to move, drag the bottom handle to resize, or recolor and delete · tap the circle to mark done ✓ / missed ✕';
+  }
+
   function buildScheduleGrid() {
     computeBounds();
     renderLegend();
+    renderDayStrip();
+    renderSchedHint();
     var GRID_H = (dayEndMin - dayStartMin) * PX_PER_MIN;
     var grid = document.getElementById('schedGrid');
     grid.innerHTML = '';
     dayCols = {};
     var todayIso = iso(new Date());
+    var days = visibleDays();
 
     grid.appendChild(el('div'));
-    SCHED_DAYS.forEach(function (def, idx) {
-      var d = new Date(weekStart); d.setDate(d.getDate() + idx);
+    days.forEach(function (def) {
+      var d = dateOfDay(def.key);
       var head = el('div', 'sched-head ' + def.color);
-      head.textContent = def.label.slice(0, 3);
+      head.textContent = isWide() ? def.label.slice(0, 3) : def.label;
       head.appendChild(el('span', 'date', fmt(d)));
       if (iso(d) === todayIso) head.classList.add('today-col');
       grid.appendChild(head);
@@ -761,8 +1132,8 @@
     }
     grid.appendChild(timeCol);
 
-    SCHED_DAYS.forEach(function (def, idx) {
-      var d = new Date(weekStart); d.setDate(d.getDate() + idx);
+    days.forEach(function (def) {
+      var d = dateOfDay(def.key);
       var col = el('div', 'day-col');
       col.style.height = GRID_H + 'px';
       col.dataset.day = def.key;
@@ -775,6 +1146,14 @@
     renderBlocks();
   }
 
+  // Rebuild when crossing the phone/desktop breakpoint, since the two layouts
+  // render a different number of day columns.
+  function onBreakpointChange() {
+    if (document.getElementById('scheduleView').style.display !== 'none') buildScheduleGrid();
+  }
+  if (wideMQ.addEventListener) wideMQ.addEventListener('change', onBreakpointChange);
+  else if (wideMQ.addListener) wideMQ.addListener(onBreakpointChange);
+
   function renderBlocks() {
     Object.keys(dayCols).forEach(function (k) {
       Array.prototype.slice.call(dayCols[k].querySelectorAll('.tblock')).forEach(function (n) { n.remove(); });
@@ -783,9 +1162,10 @@
   }
 
   function makeBlockEl(b) {
-    var div = el('div', 'tblock' + (b.status ? ' st-' + b.status : ''));
+    var h = (b.end - b.start) * PX_PER_MIN;
+    var div = el('div', 'tblock' + (b.status ? ' st-' + b.status : '') + (h < 60 ? ' short' : ''));
     div.style.top = ((b.start - dayStartMin) * PX_PER_MIN) + 'px';
-    div.style.height = ((b.end - b.start) * PX_PER_MIN) + 'px';
+    div.style.height = h + 'px';
     div.style.background = b.color;
 
     var row = el('div', 'tb-row');
@@ -810,14 +1190,27 @@
     var time = el('div', 'tb-time', fmtTime(b.start) + ' – ' + fmtTime(b.end));
     div.appendChild(time);
 
+    var actions = el('div', 'tb-actions');
+
+    var grip = el('button', 'tb-grip', '✥');
+    grip.title = 'Drag to move';
+    grip.setAttribute('aria-label', 'Drag to move block');
+    grip.addEventListener('pointerdown', function (e) {
+      e.stopPropagation(); e.preventDefault();
+      startMove(e, b, div, time, { keepSelection: true });
+    });
+    actions.appendChild(grip);
+
     var del = el('button', 'tb-del', '✕');
+    del.setAttribute('aria-label', 'Delete block');
     del.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
     del.onclick = function () {
       var i = data.blocks.indexOf(b);
       if (i > -1) data.blocks.splice(i, 1);
       save(); buildScheduleGrid(); renderDays(); renderProgress();
     };
-    div.appendChild(del);
+    actions.appendChild(del);
+    div.appendChild(actions);
 
     var dots = el('div', 'tb-colors');
     getCats().forEach(function (c) {
@@ -894,18 +1287,38 @@
           cat: cat.id, color: cat.color
         };
         data.blocks.push(block);
-        save(); renderBlocks(); renderDays(); renderProgress();
+        save(); renderBlocks(); renderDays(); renderProgress(); renderDayStrip();
         var newEl = dayCols[dayKey].lastElementChild;
         if (newEl) { var inp = newEl.querySelector('input'); if (inp) inp.focus(); }
       });
     });
   }
 
-  function startMove(e, b, div, timeEl) {
+  // Selecting a block reveals its delete and recolor controls. On a pointer
+  // device hover does this, but touch has no hover — so a tap selects.
+  function selectBlock(div) {
+    var already = div.classList.contains('sel');
+    clearBlockSelection();
+    if (!already) div.classList.add('sel');
+  }
+  function clearBlockSelection() {
+    Array.prototype.forEach.call(document.querySelectorAll('.tblock.sel'), function (n) {
+      n.classList.remove('sel');
+    });
+  }
+  document.addEventListener('pointerdown', function (e) {
+    if (!e.target.closest || !e.target.closest('.tblock')) clearBlockSelection();
+  });
+
+  function startMove(e, b, div, timeEl, opts) {
+    opts = opts || {};
     var duration = b.end - b.start;
     var grabOffset = colMinutes(dayCols[b.day], e.clientY) - b.start;
     var moved = false;
+    var originY = e.clientY, originX = e.clientX;
     drag(function (e2) {
+      // A few pixels of slop, so a slightly shaky tap still reads as a tap.
+      if (!moved && Math.abs(e2.clientY - originY) < 4 && Math.abs(e2.clientX - originX) < 4) return;
       moved = true;
       var newDay = dayAtX(e2.clientX) || b.day;
       var newStart = clamp(snap(colMinutes(dayCols[newDay], e2.clientY) - grabOffset), dayStartMin, dayEndMin - duration);
@@ -917,7 +1330,8 @@
       div.style.top = ((b.start - dayStartMin) * PX_PER_MIN) + 'px';
       timeEl.textContent = fmtTime(b.start) + ' – ' + fmtTime(b.end);
     }, function () {
-      if (moved) { save(); renderDays(); }
+      if (moved) { save(); renderDays(); renderDayStrip(); }
+      else if (!opts.keepSelection) selectBlock(div);
     });
   }
 
@@ -1121,7 +1535,21 @@
   function setWeek(newStart) { weekStart = newStart; load(); render(); }
   document.getElementById('prevBtn').onclick = function () { var d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeek(d); };
   document.getElementById('nextBtn').onclick = function () { var d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeek(d); };
-  document.getElementById('todayBtn').onclick = function () { setWeek(mondayOf(new Date())); };
+  document.getElementById('todayBtn').onclick = function () {
+    setWeek(mondayOf(new Date()));
+    selectedDay = todayKeyInWeek() || 'mon';
+    buildScheduleGrid();
+    scrollToToday();
+  };
+
+  // Today's card sits several screens down on a phone, so jump to it.
+  function scrollToToday() {
+    var card = document.getElementById('todayCard');
+    if (!card || document.getElementById('plannerView').style.display === 'none') return;
+    var top = card.getBoundingClientRect().top + window.pageYOffset
+      - document.getElementById('topbar').offsetHeight - 8;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  }
 
   // Tabs
   function setTab(name) {
@@ -1136,10 +1564,30 @@
   document.getElementById('tabPlanner').onclick = function () { setTab('planner'); };
   document.getElementById('tabSchedule').onclick = function () { setTab('schedule'); };
 
+  // Shadow under the top bar only once content has scrolled beneath it.
+  var topbar = document.getElementById('topbar');
+  var sentinel = el('div');
+  sentinel.style.cssText = 'position:absolute;top:0;height:1px;width:1px';
+  document.body.appendChild(sentinel);
+  if (window.IntersectionObserver) {
+    new IntersectionObserver(function (entries) {
+      topbar.classList.toggle('stuck', !entries[0].isIntersecting);
+    }).observe(sentinel);
+  }
+
   load();
   renderImportCat();
+  selectedDay = todayKeyInWeek() || 'mon';
   render();
   setTab(localStorage.getItem('wp-tab') || 'planner');
+
+  // Offline support. Requires a secure context, so it is skipped on file://
+  // and only registers once the page has settled.
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* offline support is optional */ });
+    });
+  }
 })();
 </script>
 </body>
