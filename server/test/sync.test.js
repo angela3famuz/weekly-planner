@@ -40,7 +40,7 @@ after(async () => {
 
 beforeEach(async () => {
   if (!HAS_DB) return;
-  await pool.query('truncate weeks, settings, tokens');
+  await pool.query('truncate weeks, settings, tokens, history');
   await pool.query('alter sequence sync_seq restart with 1');
 });
 
@@ -261,6 +261,112 @@ test('a request bigger than 1mb is refused as 413, not 500', { skip: !HAS_DB }, 
   assert.equal((await r.json()).error, 'too_large');
   const { rows } = await pool.query('select count(*)::int as n from weeks');
   assert.equal(rows[0].n, 0);
+});
+
+/* ---------------- history: the thing that replaces manual backups ---------- */
+
+const getJson = (path, token) =>
+  fetch(base + path, { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
+
+test('every changed version is recorded', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(1000, 'v1') } }, token);
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(2000, 'v2') } }, token);
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(3000, 'v3') } }, token);
+
+  const h = await getJson('/history?ref=2026-07-13', token);
+  assert.equal(h.versions.length, 3);
+  // newest first
+  assert.deepEqual(h.versions.map((v) => v.updatedAt), [3000, 2000, 1000]);
+});
+
+test('an unchanged re-sync does not pile up identical versions', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(1000, 'same') } }, token);
+  // Same content, later timestamp — wins LWW, but there is nothing new to keep.
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(2000, 'same') } }, token);
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(3000, 'same') } }, token);
+
+  const h = await getJson('/history?ref=2026-07-13', token);
+  assert.equal(h.versions.length, 1, 'only the first version should be recorded');
+});
+
+test('a losing write records nothing', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(5000, 'winner') } }, token);
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(4000, 'loser') } }, token);
+  const h = await getJson('/history?ref=2026-07-13', token);
+  assert.equal(h.versions.length, 1);
+  assert.equal(h.versions[0].updatedAt, 5000);
+});
+
+test('an accidental delete can be undone', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  // A week of real work...
+  await post('/sync', {
+    since: 0,
+    weeks: { '2026-07-13': { focus: 'a month of planning', blocks: [{ text: 'Cafe shift' }], updatedAt: 1000 } },
+  }, token);
+
+  // ...then it is wiped, and the deletion syncs faithfully to every device.
+  await post('/sync', {
+    since: 0, weeks: { '2026-07-13': { focus: '', blocks: [], updatedAt: 2000, deleted: true } },
+  }, token);
+
+  const fresh = await getJson('/history?ref=2026-07-13', token);
+  assert.equal(fresh.versions.length, 2);
+  const good = fresh.versions.find((v) => v.updatedAt === 1000);
+
+  const restored = await (await post('/restore', { id: good.id }, token)).json();
+  assert.equal(restored.restored.ref, '2026-07-13');
+
+  // A device that pulls from scratch now sees the work back, not the deletion.
+  const down = await (await post('/sync', { since: 0 }, token)).json();
+  assert.equal(down.weeks['2026-07-13'].focus, 'a month of planning');
+  assert.equal(down.weeks['2026-07-13'].blocks[0].text, 'Cafe shift');
+  assert.ok(!down.weeks['2026-07-13'].deleted, 'the tombstone must be lifted');
+});
+
+test('a restore wins on other devices, and is itself undoable', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(1000, 'original') } }, token);
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(2000, 'mistake') } }, token);
+
+  const h = await getJson('/history?ref=2026-07-13', token);
+  const original = h.versions.find((v) => v.updatedAt === 1000);
+  const r = await (await post('/restore', { id: original.id }, token)).json();
+
+  // Stamped now, so it beats the "mistake" on every device's next sync.
+  assert.ok(r.restored.updatedAt > 2000);
+  const down = await (await post('/sync', { since: 0 }, token)).json();
+  assert.equal(down.weeks['2026-07-13'].focus, 'original');
+
+  // The restore is recorded too, so restoring the wrong thing is recoverable.
+  const after = await getJson('/history?ref=2026-07-13', token);
+  assert.equal(after.versions.length, 3);
+  assert.ok(after.versions.some((v) => v.updatedAt === 2000), 'the mistake is still there to go back to');
+});
+
+test('history needs auth and rejects a nonsense ref', { skip: !HAS_DB }, async () => {
+  assert.equal((await fetch(base + '/history?ref=2026-07-13')).status, 401);
+  const token = await login();
+  const bad = await fetch(base + '/history?ref=hello', { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(bad.status, 400);
+  const missing = await post('/restore', { id: 999999 }, token);
+  assert.equal(missing.status, 404);
+});
+
+test('settings changes are recorded too', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  await post('/sync', { since: 0, settings: { habits: ['Water'], updatedAt: 1000 } }, token);
+  await post('/sync', { since: 0, settings: { habits: [], updatedAt: 2000 } }, token);  // deleted every habit
+  const h = await getJson('/history?ref=settings', token);
+  assert.equal(h.versions.length, 2);
+
+  const withHabits = h.versions.find((v) => v.updatedAt === 1000);
+  await post('/restore', { id: withHabits.id }, token);
+  const down = await (await post('/sync', { since: 0 }, token)).json();
+  assert.deepEqual(down.settings.habits, ['Water']);
 });
 
 test('malformed JSON is a 400, not a 500', { skip: !HAS_DB }, async () => {

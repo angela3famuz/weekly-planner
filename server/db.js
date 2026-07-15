@@ -35,8 +35,44 @@ export async function migrate() {
       created_at timestamptz not null default now(),
       last_seen  timestamptz
     );
+
+    -- Append-only. Never updated, never deleted by the app.
+    -- Sync on its own is a replica, not an archive: last-write-wins means a
+    -- delete is just another write that wins, and it propagates faithfully to
+    -- every device. This table is what makes an accidental delete recoverable,
+    -- and the reason manual backups stop being the only safety net.
+    create table if not exists history (
+      id          bigserial primary key,
+      kind        text    not null,          -- 'week' | 'settings'
+      ref         text    not null,          -- the week's date, or 'settings'
+      doc         jsonb   not null,
+      deleted     boolean not null default false,
+      updated_at  bigint  not null,
+      recorded_at timestamptz not null default now()
+    );
+    create index if not exists history_ref_idx on history (kind, ref, id desc);
   `);
 }
+
+// Recorded only for writes that actually won, and only when the content really
+// changed — re-syncing an unchanged week must not pile up identical rows.
+export const INSERT_HISTORY = `
+  insert into history (kind, ref, doc, deleted, updated_at)
+  values ($1, $2, $3, $4, $5)
+`;
+
+export const SELECT_PREV_WEEK_DOC = `select doc, deleted from weeks where week_iso = $1`;
+export const SELECT_PREV_SETTINGS_DOC = `select doc from settings where id = 1`;
+
+export const SELECT_HISTORY = `
+  select id, updated_at, recorded_at, deleted
+  from history
+  where kind = $1 and ref = $2
+  order by id desc
+  limit $3
+`;
+
+export const SELECT_HISTORY_DOC = `select kind, ref, doc, deleted from history where id = $1`;
 
 /*
  * Last-write-wins, decided by the database rather than by a read-then-write in
