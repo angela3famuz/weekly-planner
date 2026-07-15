@@ -1,7 +1,8 @@
 # Sync design — same planner on phone and laptop
 
-**Status:** proposal, nothing built. Read the [Failure modes](#7-failure-modes-read-this-bit)
-and [Open questions](#11-open-questions--your-call) before agreeing to any of it.
+**Status:** design agreed 2026-07-15 (§11), implementation not started. The cost of the
+simple model is in [Failure modes](#7-failure-modes-read-this-bit) — that section is the
+one to argue with.
 
 ## 1. Goal and non-goals
 
@@ -60,8 +61,10 @@ rate-limit.
 POST /auth  { "passcode": "…" }  ->  { "token": "<32 random bytes, base64url>" }
 ```
 
-- The passcode is compared against an **argon2id hash held in an env var**. Not in the
-  database — there's one passcode, and a table implies users we don't have.
+- The passphrase is compared against an **scrypt hash held in an env var**. Not in the
+  database — there's one passphrase, and a table implies users we don't have. scrypt because
+  it's in Node core: no native module to build on Railway, one less dependency to trust with
+  the one secret that matters.
 - The token is opaque and long-lived, stored in `localStorage` as `wp-token`, and sent as
   `Authorization: Bearer …`. **A header, not a cookie** — which means CSRF is structurally
   impossible and we never need `credentials: 'include'`.
@@ -300,20 +303,22 @@ Each phase is independently useful and independently abandonable.
 
 Stopping after 2b would already meet the goal, just manually. That's the point of the split.
 
-## 11. Open questions — your call
+## 11. Decisions
 
-1. **Passcode: a passphrase, right?** Four random words (`copper-hinge-atlas-rain`) is
-   ~44 bits and typed once per device. A 4-digit PIN is 10,000 guesses and the only thing
-   between the internet and your schedule. I'd push hard for the passphrase, but you're the
-   one typing it. **I will never type it — you set it directly in Railway's env vars.**
-2. **Railway: new service, or add to the existing Village project?** Sharing the project
-   shares the Postgres instance (cheaper, one bill) but couples two unrelated apps and their
-   deploys. I lean separate service, separate database.
-3. **Do you want a visible sync status?** A quiet line in the ⋯ sheet ("Synced 2 min ago"),
-   or something always on screen? Silent-until-broken is my instinct.
-4. **Is per-week LWW genuinely OK?** §7 is the honest cost. If you routinely edit the same
-   week on both devices in the same session, say so now — it changes the data model, and
-   it's much cheaper to decide before 2a than after 2d.
-5. **What should happen when the passcode is wrong on a device that has local data?** I'd
-   keep working local-only and never touch local data. Sync should never be able to destroy
-   what's on the device just because auth failed.
+Settled 2026-07-15. These are now assumptions, not questions.
+
+1. **Passphrase, not a PIN.** Four random words (~44 bits). Typed once per device.
+   **Nobody types it but you**: `server/tools/hash-passphrase.js` reads it locally, echoes
+   nothing, and prints only the hash to paste into Railway. The passphrase itself never
+   appears in this repo, in a chat, or in a log.
+2. **Separate Railway service, separate database.** Not shared with The Village. Costs a
+   little more; keeps two unrelated apps from sharing a blast radius or a deploy.
+3. **Sync status stays quiet** — one line in the ⋯ sheet ("Synced 2 min ago", or what went
+   wrong). Nothing permanently on screen. *Taken as the default; say so if you want it
+   louder.*
+4. **Per-week last-write-wins is accepted**, with §7 understood: editing the same week on
+   two devices loses one side's changes to that week. The wire format leaves the door open
+   to per-entity resolution later without a protocol change.
+5. **A failed passcode never touches local data.** Wrong passphrase, expired token, server
+   down — all the same: carry on local-only, keep everything, retry later. Sync must never
+   be able to destroy what is on the device. *Taken as the default.*
