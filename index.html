@@ -3041,6 +3041,66 @@
     return changed;
   }
 
+  /* ---- A clock that was wrong ------------------------------------------------
+     A week stamped in the future and a clock that is wrong RIGHT NOW are not the
+     same problem, but the server cannot tell them apart: both arrive as a
+     document dated ahead of it, and it refuses the whole request — pulls
+     included. That is what bricked sync. One keystroke while the clock was fast
+     stamps a week in the future; the clock corrects; the week is still dirty, so
+     every sync is refused forever, and the ref can never leave the queue because
+     the request never succeeds. Signing out and in does not help: it re-queues
+     everything, poison included. Meanwhile the status line went on blaming a
+     clock that was by then perfectly correct.
+
+     The client CAN tell the two apart, because it knows both times. If this
+     clock agrees with the server, the future stamps are stale damage from a
+     clock since corrected — repairable, so repair them and carry on. If the
+     clock really is wrong, nothing is repaired and it keeps saying so, loudly:
+     silently clamping a live-wrong clock would let it win every conflict, which
+     is the very thing the server's refusal exists to prevent. */
+  var CLOCK_OK_MS = 90 * 1000;   // agreeing with the server to the minute is plenty
+
+  function repairFutureStamps(serverTime) {
+    if (Math.abs(Date.now() - serverTime) > CLOCK_OK_MS) return -1;   // still wrong: not ours to repair
+    var fixed = 0;
+    var tombs = tombstones(), tombDirty = false;
+    SYNC.dirty().forEach(function (ref) {
+      if (ref === 'settings') {
+        if (Number(localStorage.getItem('wp-settings-updated') || 0) > serverTime) {
+          localStorage.setItem('wp-settings-updated', String(serverTime));
+          fixed++;
+        }
+        return;
+      }
+      var raw = localStorage.getItem('wp-' + ref);
+      if (!raw) {
+        // A pending delete can carry a bad stamp too.
+        if (Number(tombs[ref] || 0) > serverTime) { tombs[ref] = serverTime; tombDirty = true; fixed++; }
+        return;
+      }
+      try {
+        var doc = JSON.parse(raw);
+        if (Number(doc.updatedAt || 0) > serverTime) {
+          // The server's clock is the only one here known to be right.
+          doc.updatedAt = serverTime;
+          localStorage.setItem('wp-' + ref, JSON.stringify(doc));
+          fixed++;
+        }
+      } catch (e) {}
+    });
+    if (tombDirty) localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(tombs));
+    return fixed;
+  }
+
+  // How far out, and what to do about it. "The clock is wrong" stayed on screen
+  // long after the clock had been fixed, and never said by how much.
+  function clockSkewMessage(serverTime) {
+    var mins = Math.round(Math.abs(Date.now() - serverTime) / 60000);
+    var dir = Date.now() > serverTime ? 'ahead of' : 'behind';
+    return "this device's clock is about " + mins + ' minute' + (mins === 1 ? '' : 's') + ' ' +
+      dir + ' the server — syncing is paused until the clock is corrected';
+  }
+
   function syncStatusText() {
     if (!SYNC.enabled()) return 'Not syncing — this device only.';
     if (syncState.busy) return 'Syncing…';
@@ -3049,7 +3109,13 @@
     var mins = Math.round((Date.now() - syncState.lastAt) / 60000);
     var when = mins < 1 ? 'just now' : mins === 1 ? '1 minute ago' : mins + ' minutes ago';
     var pending = SYNC.dirty().length;
-    return 'Synced ' + when + (pending ? ' · ' + pending + ' waiting to upload' : '');
+    // Re-dating someone's weeks is a change to their data, so say it happened
+    // rather than quietly fix it and look clever.
+    var redated = syncState.clockRepaired
+      ? ' · re-dated ' + syncState.clockRepaired + ' item' + (syncState.clockRepaired === 1 ? '' : 's') +
+        " stamped by this device's clock while it was wrong"
+      : '';
+    return 'Synced ' + when + (pending ? ' · ' + pending + ' waiting to upload' : '') + redated;
   }
 
   function paintSyncStatus() {
@@ -3128,6 +3194,27 @@
       if (res.status === 429) throw new Error('too many requests, will retry');
       if (!res.ok) {
         var body = await res.json().catch(function () { return {}; });
+
+        if (body.error === 'clock_skew' && validStamp(body.serverTime)) {
+          var fixed = repairFutureStamps(body.serverTime);
+          if (fixed > 0) {
+            // Stale stamps from a clock that has since been corrected. Repaired,
+            // so retry at once rather than sit refused until something else
+            // happens to trigger a sync.
+            syncState.clockRepaired = (syncState.clockRepaired || 0) + fixed;
+            syncState.lastError = '';
+            syncState.backoff = 2000;
+            clearTimeout(syncState.retryTimer);
+            // busy is still true here; the finally below clears it before this fires.
+            syncState.retryTimer = setTimeout(function () { runSync(opts); }, 50);
+            paintSyncStatus();
+            return;
+          }
+          // Nothing to repair, so the clock really is wrong now. Say so, with
+          // the one number that makes it actionable.
+          throw new Error(clockSkewMessage(body.serverTime));
+        }
+
         // Raw codes like "bad_updated_at" tell the reader nothing about what
         // to do; each of these is something a person can act on or ignore.
         var SAYS = {

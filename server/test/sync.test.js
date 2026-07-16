@@ -246,10 +246,25 @@ test('a clock 10 minutes fast is rejected, not clamped', { skip: !HAS_DB }, asyn
   const future = Date.now() + 10 * 60 * 1000;
   const r = await post('/sync', { since: 0, weeks: { '2026-07-13': week(future, 'fast') } }, token);
   assert.equal(r.status, 400);
-  assert.equal((await r.json()).error, 'clock_skew');
+  const body = await r.json();
+  assert.equal(body.error, 'clock_skew');
   // and nothing was written
   const { rows } = await pool.query('select count(*)::int as n from weeks');
   assert.equal(rows[0].n, 0);
+
+  /*
+   * serverTime is not a nicety: it is the whole of the client's way out.
+   * Refusing a future stamp protects against a clock that is wrong NOW, but the
+   * refusal is indistinguishable from one aimed at a stamp left behind by a
+   * clock since corrected — and that one is permanent, because the ref can
+   * never leave the dirty queue while every request is refused. The client
+   * tells the two apart by comparing this against its own clock, and repairs
+   * the stale stamps. Drop this field and sync bricks itself again, silently.
+   */
+  assert.ok(Number.isInteger(body.serverTime),
+    'the client can only tell a wrong clock from a stale stamp by comparing against serverTime');
+  assert.ok(Math.abs(body.serverTime - Date.now()) < 60_000,
+    'serverTime must be the server\'s real clock — the client re-dates its weeks to it');
 });
 
 test('a bad week in the batch writes none of it', { skip: !HAS_DB }, async () => {
