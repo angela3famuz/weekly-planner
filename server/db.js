@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { describeError } from './errors.js';
 
 const { Pool } = pg;
 
@@ -7,6 +8,22 @@ export const pool = new Pool({
   // Railway's private network needs no TLS; an external URL does.
   ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : false,
   max: 4,
+  // Without this, connect() on an unreachable database waits forever and the
+  // request hangs instead of failing. A sync is a background retry — it can
+  // afford to lose and try again far better than it can afford to hang.
+  connectionTimeoutMillis: 10_000,
+});
+
+/*
+ * A single-user service idles with connections open for hours, so Postgres
+ * going away (a Railway restart, an OOM) is the NORMAL failure, not an exotic
+ * one. pg re-emits an idle client's error on the pool, and an 'error' event
+ * with no listener THROWS — from a socket callback, where no try/catch in a
+ * request handler can reach it. That killed the process and crash-looped it.
+ * The pool discards the dead client on its own; this only has to not die.
+ */
+pool.on('error', (e) => {
+  console.error('[pool] idle client error (connection dropped, pool will recover): ' + describeError(e));
 });
 
 // Idempotent: safe to run on every boot.
@@ -63,6 +80,34 @@ export const INSERT_HISTORY = `
 
 export const SELECT_PREV_WEEK_DOC = `select doc, deleted from weeks where week_iso = $1`;
 export const SELECT_PREV_SETTINGS_DOC = `select doc from settings where id = 1`;
+
+export const SELECT_WEEK_STAMP = `select updated_at from weeks where week_iso = $1`;
+export const SELECT_SETTINGS_STAMP = `select updated_at from settings where id = 1`;
+
+/*
+ * Taken at the top of every transaction that writes AND publishes a cursor, so
+ * those transactions run one at a time.
+ *
+ * The cursor handed to a device is max(seq) over COMMITTED rows, but seq is
+ * allocated by nextval() at write time. Under READ COMMITTED those two orders
+ * are not the same, so without this lock:
+ *
+ *   phone writes week A, gets seq=5, tx still open
+ *   iPad  writes week B, gets seq=6, reads cursor -> A is invisible -> 6
+ *   iPad  commits, stores cursor 6
+ *   phone commits; week A (seq=5) becomes visible to everyone
+ *   iPad  syncs with since=6 -> `seq > 6` never matches -> week A is NEVER sent
+ *
+ * The week is not conflicted or delayed, it is silently missing on that device
+ * forever, unless it happens to be edited again and gets a fresh seq. Two
+ * devices on sync timers overlap eventually, so this is a matter of time.
+ *
+ * Serialising is affordable precisely because this service has one user: the
+ * lock is uncontended in the normal case, and the alternative (a snapshot-aware
+ * cursor built on pg_snapshot_xmin) is a great deal of machinery for one phone
+ * and one iPad. It is released automatically at commit or rollback.
+ */
+export const LOCK_SYNC = `select pg_advisory_xact_lock(8534127)`;
 
 export const SELECT_HISTORY = `
   select id, updated_at, recorded_at, deleted
