@@ -26,9 +26,14 @@ before(async (t) => {
   await dbMod.migrate();
 
   ({ createApp } = await import('../index.js'));
-  // Raise the auth limit for the bulk of the suite; a dedicated test below
-  // spins up its own app to check the real limiter actually bites.
-  const app = createApp({ passphraseHash, allowedOrigins: [ORIGIN], authLimit: 1000, authGlobalLimit: 1000 });
+  // Raise the auth and sync limits for the bulk of the suite; a dedicated test
+  // below spins up its own app to check the real limiter actually bites. The
+  // concurrency test alone spends more than the real 60/min sync budget, and a
+  // 429 there would look exactly like the data loss it is hunting for.
+  const app = createApp({
+    passphraseHash, allowedOrigins: [ORIGIN],
+    authLimit: 1000, authGlobalLimit: 1000, syncLimit: 100000,
+  });
   await new Promise((r) => { server = app.listen(0, r); });
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -374,6 +379,44 @@ test('an unchanged re-sync does not pile up identical versions', { skip: !HAS_DB
   assert.equal(h.versions.length, 1, 'only the first version should be recorded');
 });
 
+/*
+ * The test above passes with either implementation: its fixture's keys happen
+ * to already be in jsonb's canonical order (by key length, then bytewise), so
+ * JSON.stringify agreed by luck. A real week's keys do not, which is why the
+ * guard never actually fired in production.
+ */
+test('an unchanged re-sync is unchanged whatever order the keys arrive in', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  // The shape emptyWeek() really sends, in the order it really sends it.
+  const real = (updatedAt) => ({
+    focus: 'ship it', notes: 'n', priorities: [], todos: [],
+    days: { mon: [], tue: [] }, habitChecks: {}, blocks: [], updatedAt,
+  });
+  // The same content, keys shuffled — as jsonb hands it back.
+  const shuffled = (updatedAt) => ({
+    days: { tue: [], mon: [] }, blocks: [], habitChecks: {}, todos: [],
+    priorities: [], notes: 'n', focus: 'ship it', updatedAt,
+  });
+
+  await post('/sync', { since: 0, weeks: { '2026-07-13': real(1000) } }, token);
+  await post('/sync', { since: 0, weeks: { '2026-07-13': shuffled(2000) } }, token);
+  await post('/sync', { since: 0, weeks: { '2026-07-13': real(3000) } }, token);
+
+  const h = await getJson('/history?ref=2026-07-13', token);
+  assert.equal(h.versions.length, 1,
+    'key order is not a content change: re-syncing the same week must not append a version');
+});
+
+test('stableStringify ignores key order but not content', { skip: !HAS_DB }, async () => {
+  const { stableStringify } = await import('../index.js');
+  assert.equal(stableStringify({ a: 1, b: 2 }), stableStringify({ b: 2, a: 1 }));
+  assert.notEqual(stableStringify({ a: 1 }), stableStringify({ a: 2 }));
+  // Nested, and arrays keep their order because in an array order IS content.
+  assert.equal(stableStringify({ x: { p: 1, q: 2 } }), stableStringify({ x: { q: 2, p: 1 } }));
+  assert.notEqual(stableStringify({ x: [1, 2] }), stableStringify({ x: [2, 1] }));
+  assert.equal(stableStringify(null), 'null');
+});
+
 test('a losing write records nothing', { skip: !HAS_DB }, async () => {
   const token = await login();
   await post('/sync', { since: 0, weeks: { '2026-07-13': week(5000, 'winner') } }, token);
@@ -381,6 +424,68 @@ test('a losing write records nothing', { skip: !HAS_DB }, async () => {
   const h = await getJson('/history?ref=2026-07-13', token);
   assert.equal(h.versions.length, 1);
   assert.equal(h.versions[0].updatedAt, 5000);
+});
+
+/*
+ * The cursor gap. seq is allocated by nextval() at write time, but the cursor
+ * published to a device is max(seq) over COMMITTED rows — so without
+ * serialisation a device can store a cursor that steps over a peer's row that
+ * was still in flight, and `seq > cursor` then never returns it. The week is
+ * not conflicted or delayed; it is silently gone from that device forever.
+ *
+ * Two devices, each pushing its own weeks and advancing its own cursor from the
+ * response, exactly as the client does. Then each pulls with its stored cursor
+ * and must have been told about every week the other wrote. Concurrency makes
+ * this probabilistic: without the advisory lock it fails most runs, so the
+ * rounds are here to make "most" into "effectively always".
+ */
+test('two devices syncing at once never lose a week to the cursor', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  const ROUNDS = 12;
+
+  // Each device tracks its own cursor from the server's reply, like the client.
+  const devices = [
+    { name: 'phone', cursor: 0, seen: new Set() },
+    { name: 'ipad', cursor: 0, seen: new Set() },
+  ];
+  const written = new Set();
+
+  const isoFor = (round, d) => {
+    // Distinct real dates: phone takes even weeks, iPad odd.
+    const day = 1 + (round * 2 + (d === 'phone' ? 0 : 1));
+    return '2026-01-' + String(day).padStart(2, '0');
+  };
+
+  for (let round = 0; round < ROUNDS; round++) {
+    await Promise.all(devices.map(async (dev) => {
+      const iso = isoFor(round, dev.name);
+      written.add(iso);
+      const r = await post('/sync', {
+        since: dev.cursor,
+        weeks: { [iso]: week(1000 + round, dev.name + '-' + round) },
+      }, token);
+      const body = await r.json();
+      assert.equal(r.status, 200);
+      for (const k of Object.keys(body.weeks)) dev.seen.add(k);
+      dev.cursor = body.now;          // exactly what SYNC.setCursor does
+    }));
+  }
+
+  // Drain: each device syncs until it stops learning anything new, which is all
+  // a real device ever gets to do.
+  for (const dev of devices) {
+    for (let i = 0; i < 3; i++) {
+      const body = await (await post('/sync', { since: dev.cursor, weeks: {} }, token)).json();
+      for (const k of Object.keys(body.weeks)) dev.seen.add(k);
+      dev.cursor = body.now;
+    }
+  }
+
+  for (const dev of devices) {
+    const missing = [...written].filter((iso) => !dev.seen.has(iso)).sort();
+    assert.deepEqual(missing, [],
+      `${dev.name} was never sent these weeks and never will be: ${missing.join(', ')}`);
+  }
 });
 
 test('an accidental delete can be undone', { skip: !HAS_DB }, async () => {
@@ -428,6 +533,120 @@ test('a restore wins on other devices, and is itself undoable', { skip: !HAS_DB 
   const after = await getJson('/history?ref=2026-07-13', token);
   assert.equal(after.versions.length, 3);
   assert.ok(after.versions.some((v) => v.updatedAt === 2000), 'the mistake is still there to go back to');
+});
+
+/*
+ * The two ways the process used to die outright. Both matter more than they
+ * look: a single-user service idles with connections open for hours, so a
+ * Railway Postgres restart is the normal case, not an exotic one.
+ */
+test('an idle client error does not kill the process', { skip: !HAS_DB }, async () => {
+  // pg re-emits a dropped idle client's error on the pool. An 'error' event
+  // with no listener THROWS, from a socket callback no handler can catch —
+  // which crash-looped the container. Emitting it here reproduces that exactly.
+  assert.doesNotThrow(() => {
+    pool.emit('error', Object.assign(new Error('connection terminated unexpectedly'), { code: 'ECONNRESET' }));
+  });
+  // ...and the service still works afterwards.
+  const r = await fetch(base + '/health');
+  assert.equal(r.status, 200);
+});
+
+/*
+ * Express 4 ignores an async handler's returned promise, so a rejection from
+ * handleSync's own `await pool.connect()` escaped as an unhandled rejection —
+ * which Node 20 turns into a dead process. The same outage gave /health a tidy
+ * 503, which is what made this worth fixing rather than shrugging at.
+ *
+ * Isolating it needs care: requireAuth runs first and needs the database too,
+ * so simply breaking the pool 500s at auth and never reaches the code under
+ * test. pool.query connects CALLBACK-style, while handleSync awaits the promise
+ * form — so failing only the promise form leaves auth working and breaks
+ * exactly the one call this is about. (The real-world shape of this is the pool
+ * timing out under `max: 4` while auth already holds a connection.)
+ */
+test('a connect failure inside sync is a 500, not a dead process', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  const realConnect = pool.connect.bind(pool);
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(e);
+  process.on('unhandledRejection', onUnhandled);
+
+  pool.connect = function (cb) {
+    if (typeof cb === 'function') return realConnect(cb);   // auth's pool.query still works
+    return Promise.reject(Object.assign(new Error('timeout exceeded when trying to connect'), { code: 'ETIMEDOUT' }));
+  };
+  try {
+    // Without the fix the rejection escapes, Express 4 never answers, and this
+    // request hangs forever — so cap it rather than let the suite time out.
+    const r = await fetch(base + '/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ since: 0, weeks: { '2026-07-13': week(1000, 'x') } }),
+      signal: AbortSignal.timeout(5000),
+    }).catch((e) => {
+      assert.fail('sync never answered (' + e.name + '): the rejection escaped the handler, ' +
+        'which in production is an unhandled rejection and a dead process');
+    });
+    assert.equal(r.status, 500, 'the caller must be told, not left hanging');
+    assert.equal((await r.json()).error, 'server_error');
+    // The point of the fix: the rejection was caught rather than escaping.
+    await new Promise((r2) => setImmediate(r2));
+    assert.deepEqual(unhandled, [], 'an unhandled rejection here is what killed the process');
+  } finally {
+    pool.connect = realConnect;
+    process.off('unhandledRejection', onUnhandled);
+  }
+  // Still standing and serving.
+  assert.equal((await fetch(base + '/health')).status, 200);
+});
+
+test('a weeks array is refused, not waved through unvalidated', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  // validateSync used to substitute {} for an array and report "valid", while
+  // handleSync (typeof [] === 'object') went on to write it — so nothing about
+  // this body was ever checked, and only the date cast stopped it, as a 500.
+  const r = await post('/sync', {
+    since: 0,
+    weeks: [{ focus: 'x', updatedAt: 99999999999999 }],
+  }, token);
+  assert.equal(r.status, 400, 'a bad shape is the caller\'s fault, not a server error');
+  assert.equal((await r.json()).error, 'bad_weeks');
+});
+
+test('a nonsense history limit is a 400-style answer, not a 500', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(1000, 'v1') } }, token);
+  for (const q of ['-1', '1.5', 'abc', '0']) {
+    const r = await fetch(base + '/history?ref=2026-07-13&limit=' + q, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(r.status, 200, `limit=${q} must not reach Postgres verbatim and 500`);
+  }
+});
+
+test('a restore still wins against a week stamped in the future', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  // validateSync tolerates 5 minutes of clock skew, so a phone running fast can
+  // leave a stored week stamped ahead of the server. Stamping the restore
+  // `now` then loses the upsert's `updated_at >` test silently: the restore
+  // does nothing and still answers 200.
+  const future = Date.now() + 4 * 60 * 1000;
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(1000, 'the good version') } }, token);
+  const h = await getJson('/history?ref=2026-07-13', token);
+  const good = h.versions[0];
+
+  await post('/sync', { since: 0, weeks: { '2026-07-13': week(future, 'the mistake') } }, token);
+
+  const r = await post('/restore', { id: good.id }, token);
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.ok(body.restored.updatedAt > future, 'a restore must be stamped to win, not merely to be now');
+
+  // And it must actually be what devices now pull.
+  const pulled = await (await post('/sync', { since: 0, weeks: {} }, token)).json();
+  assert.equal(pulled.weeks['2026-07-13'].focus, 'the good version',
+    'the restore reported success, so it must have actually happened');
 });
 
 test('history needs auth and rejects a nonsense ref', { skip: !HAS_DB }, async () => {
