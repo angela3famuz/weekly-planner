@@ -1754,16 +1754,21 @@
      pointercancel and pointerup never comes — so listening only for pointerup
      leaked the handlers, and the next tap anywhere ran the stale onUp. onUp is
      told which way the gesture ended so it can undo rather than commit. */
-  function drag(onMove, onUp) {
-    function mv(e) { onMove(e); }
+  function drag(onMove, onUp, pointerId) {
+    // Only the finger that started this gesture may drive it. Without the id
+    // check a second finger landing anywhere — a pinch, or just a stray thumb —
+    // fed its own coordinates to this drag, so the block leapt to wherever that
+    // finger was and the second finger's lift SAVED it there.
+    function mine(e) { return pointerId == null || e.pointerId === pointerId; }
+    function mv(e) { if (mine(e)) onMove(e); }
     function finish(e, cancelled) {
       document.removeEventListener('pointermove', mv);
       document.removeEventListener('pointerup', up);
       document.removeEventListener('pointercancel', cancel);
       onUp(e, cancelled);
     }
-    function up(e) { finish(e, false); }
-    function cancel(e) { finish(e, true); }
+    function up(e) { if (mine(e)) finish(e, false); }
+    function cancel(e) { if (mine(e)) finish(e, true); }
     document.addEventListener('pointermove', mv);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', cancel);
@@ -1798,7 +1803,7 @@
         // It exists once it has been given a title, which is what tells a real
         // one apart from a stray tap while scrolling.
         openBlockEditor(null, { day: dayKey, start: startMin, end: endMin });
-      });
+      }, e.pointerId);
     });
   }
 
@@ -1832,7 +1837,7 @@
       // A drag repositions; a tap that never moved means "open this block".
       if (moved) { save(); renderBlocks(); renderDays(); renderDayStrip(); }
       else if (!opts.silent) openBlockEditor(b);
-    });
+    }, e.pointerId);
   }
 
   function startResize(e, b, div, timeEl) {
@@ -1844,7 +1849,7 @@
     }, function (e2, cancelled) {
       if (cancelled) { b.end = originEnd; renderBlocks(); return; }
       save(); renderBlocks(); renderDays();
-    });
+    }, e.pointerId);
   }
 
   /* ================= Block editor =================
@@ -2561,8 +2566,10 @@
      the other device holding a copy it would push straight back, so the two
      disagreed while the UI reported a clean sync.
 
-     Safe to be this blunt because the server keeps append-only history, so
-     restoring the wrong backup is itself undoable. */
+     What makes it safe to be this blunt is the undo point taken in doRestore().
+     NOT the server's history: that exists and records every version, but nothing
+     in this client calls /history or /restore, so it is only reachable by hand
+     with curl. Do not lean on it in the UI until something here can read it. */
   function applyBackup(obj, mode) {
     var added = 0, skipped = 0, removed = 0;
 
