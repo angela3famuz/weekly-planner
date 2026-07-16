@@ -301,8 +301,20 @@ hard-deleted, so a device that's been offline for a month still learns about it.
 
 1. **Take a backup first** (⋯ → Download backup). Non-negotiable, and the reason backup
    shipped before sync.
-2. Existing weeks have no `updatedAt`. On first load after the update, stamp every existing
-   week with `Date.now()`.
+2. Existing weeks have no `updatedAt`, and the server rejects that (`bad_updated_at`) —
+   correctly, since it cannot resolve a conflict without one.
+
+   **Stamp them as old (`1`), not as `Date.now()`** — this doc originally said `Date.now()`
+   and that was wrong. An unstamped week's real age is unknown, and unknown must never beat
+   a real edit: with `Date.now()`, the second device to sign in would silently overwrite the
+   first device's genuine history with its own stale copy, purely for connecting later.
+   Losing every conflict is the safe direction, and a week that exists only on one device
+   still uploads, because the server has nothing to weigh it against.
+
+   The same reasoning applies to *derived* writes. Carry-over runs on first open of a week
+   and used to call `save()`, which stamped `Date.now()` — so **merely opening the planner
+   counted as editing it**, re-creating the same overwrite. Derived writes keep the existing
+   stamp (`save({keepStamp:true})`); only typing sets it to now.
 3. First sync from the device that has the real data: cursor is 0, server is empty, so
    everything is pushed. Nothing can be lost — there's nothing on the server to lose to.
 4. Second device: enter the same passcode. Cursor 0, so it pulls everything.
