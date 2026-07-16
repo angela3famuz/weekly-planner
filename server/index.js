@@ -288,23 +288,84 @@ async function handleRestore(req, res, next) {
   }
 }
 
+/*
+ * Node 20+ enables autoSelectFamily by default: when a hostname resolves to
+ * several addresses (IPv6 and IPv4) and ALL of them fail, it throws an
+ * AggregateError whose .message is EMPTY and whose real causes are hidden in
+ * .errors. Railway's private network is IPv6-only, so a failure there arrives
+ * in exactly that shape — and logging only e.message printed
+ * "[boot] migration failed:" with nothing after it, over and over.
+ * Never log a bare .message for a connection error.
+ */
+export function describeError(e) {
+  if (!e) return 'unknown error';
+  const parts = [];
+  if (e.message) parts.push(e.message);
+  if (e.code) parts.push('code=' + e.code);
+  if (Array.isArray(e.errors) && e.errors.length) {
+    parts.push('caused by: ' + e.errors
+      .map((sub) => (sub && sub.message ? sub.message : String(sub)) + (sub && sub.code ? ' [' + sub.code + ']' : ''))
+      .join(' | '));
+  }
+  if (!parts.length) parts.push(e.constructor ? e.constructor.name : String(e));
+  return parts.join(' · ');
+}
+
+// Where are we actually dialling? Host and port only — the URL carries the
+// database password, which must never reach a log.
+export function dbTarget(url = process.env.DATABASE_URL) {
+  try {
+    const u = new URL(url);
+    return u.hostname + ':' + (u.port || '5432') + u.pathname;
+  } catch {
+    return '(DATABASE_URL is not a valid URL — check for an unresolved ${{...}} reference)';
+  }
+}
+
+// Railway's private network can take a few seconds to come up after a container
+// starts, so the first connection legitimately fails. Exiting immediately turned
+// that into an endless crash-loop.
+async function migrateWithRetry(attempts = 7) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await migrate();
+      if (attempt > 1) console.log('[boot] database reached on attempt ' + attempt);
+      return;
+    } catch (e) {
+      console.error('[boot] attempt ' + attempt + '/' + attempts + ' — cannot reach ' + dbTarget() + ': ' + describeError(e));
+      if (attempt === attempts) throw e;
+      const wait = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+      console.log('[boot] retrying in ' + wait + 'ms');
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
 // Only boot when run directly, so tests can import createApp without listening.
 const isMain = process.argv[1] &&
   path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   const PORT = Number(process.env.PORT) || 8080;
   if (!process.env.DATABASE_URL) {
-    console.error('[config] DATABASE_URL is not set. Add a PostgreSQL plugin to the Railway project.');
+    console.error('[config] DATABASE_URL is not set. Add a PostgreSQL plugin to the Railway project,');
+    console.error('[config] then set DATABASE_URL = ${{Postgres.DATABASE_URL}} on THIS service.');
     process.exit(1);
   }
+  console.log('[config] database target: ' + dbTarget());
   if (!process.env.PASSPHRASE_HASH) {
-    console.warn('[config] PASSPHRASE_HASH is not set — /auth will return 503. Run `npm run hash`.');
+    console.warn('[config] PASSPHRASE_HASH is not set — /auth will return 503. Run `node tools/hash-passphrase.js`.');
   }
   if (!envOrigins().length) {
     console.warn('[config] ALLOWED_ORIGINS is not set — no browser will be allowed to call this.');
   }
   const app = createApp();
-  migrate()
-    .then(() => app.listen(PORT, () => console.log(`sync listening on :${PORT}`)))
-    .catch((e) => { console.error('[boot] migration failed:', e.message); process.exit(1); });
+  migrateWithRetry()
+    .then(() => app.listen(PORT, () => console.log('sync listening on :' + PORT)))
+    .catch((e) => {
+      console.error('[boot] giving up: ' + describeError(e));
+      console.error('[boot] checklist: is the Postgres plugin in the SAME Railway project as this service?');
+      console.error('[boot]            is DATABASE_URL a ${{Postgres.DATABASE_URL}} reference, not typed by hand?');
+      console.error('[boot]            if using a public database URL rather than the private network, set DATABASE_SSL=true');
+      process.exit(1);
+    });
 }

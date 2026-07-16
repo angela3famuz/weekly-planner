@@ -124,6 +124,25 @@ curl https://<your-service>.up.railway.app/health
 # {"ok":true,"configured":true}
 ```
 
+### If it crash-loops on boot
+
+The logs name the target and the real cause:
+
+```
+[config] database target: postgres.railway.internal:5432/railway
+[boot] attempt 1/7 — cannot reach postgres.railway.internal:5432/railway: code=ECONNREFUSED · caused by: ...
+```
+
+Boot retries 7 times with backoff (~15s total) before giving up, because Railway's private
+network takes a few seconds to come up and the first attempt legitimately fails. If it
+still gives up:
+
+| The target shown is | Meaning |
+| --- | --- |
+| `(not a valid URL …)` | `DATABASE_URL` was typed by hand and the `${{Postgres.DATABASE_URL}}` reference never resolved |
+| `postgres.railway.internal` + `ENOTFOUND`/`ECONNREFUSED` | The Postgres plugin is not in the **same project** as this service — private hostnames do not cross projects |
+| a public host + a TLS error | Set `DATABASE_SSL=true`; the private network needs no TLS but a public URL does |
+
 ## Notes
 
 - `scrypt` comes from Node core, so there is no native module to build and one less
