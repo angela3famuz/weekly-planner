@@ -119,7 +119,17 @@ Restoring takes a file or pasted text, tells you what's in it, then offers two c
 
 - **Merge** — adds only weeks you don't already have. A week on this device always wins;
   nothing you have is overwritten. Habits are unioned.
-- **Replace all** — wipes every week here first, then restores. Asks for confirmation.
+- **Replace all** — the backup becomes the truth: a week it doesn't have is deleted, not
+  merely skipped. Asks for confirmation.
+
+**With sync on, Replace all replaces every device, not just this one.** A week the backup
+lacks is deleted on the iPad too. That is the point of it, but it is worth knowing before
+reaching for it. The current week is emptied rather than deleted, because the app always
+needs one.
+
+Either way, **Undo** appears straight afterwards and puts back exactly what was there —
+on every synced device, by the same path the restore took. It survives a reload, but it is
+one level: a second restore replaces it, so undo a mistake before doing anything else.
 
 Use this to move to a new phone, to recover after a wipe, or to carry entries from a
 Safari tab into the installed app (iOS keeps those two storage areas separate, so a
