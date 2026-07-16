@@ -270,11 +270,22 @@ async function handleSync(req, res, next) {
         await client.query(INSERT_HISTORY, ['week', weekIso, doc, Boolean(doc.deleted), doc.updatedAt]);
       }
     }
+    let settingsWinner = null;
     if (settings) {
       const prev = await client.query(SELECT_PREV_SETTINGS_DOC);
       const r = await client.query(UPSERT_SETTINGS, [settings, settings.updatedAt]);
-      if (r.rowCount === 0) conflicts.push('settings');
-      else if (changedFrom(prev.rows[0], settings)) {
+      if (r.rowCount === 0) {
+        conflicts.push('settings');
+        /*
+         * The push lost, so the row's seq did not move — and SELECT_CHANGED_
+         * SETTINGS only returns `seq > since`, so a client whose cursor is
+         * already past it is never told what beat it. That was survivable while
+         * settings were replaced wholesale. It is not now: the client merges
+         * habits per item, and it can only merge against a document it has
+         * seen. Hand it the winner.
+         */
+        settingsWinner = prev.rows[0] ? prev.rows[0].doc : null;
+      } else if (changedFrom(prev.rows[0], settings)) {
         await client.query(INSERT_HISTORY, ['settings', 'settings', settings, false, settings.updatedAt]);
       }
     }
@@ -289,6 +300,7 @@ async function handleSync(req, res, next) {
       out.weeks[row.week_iso] = row.deleted ? { ...row.doc, deleted: true } : row.doc;
     }
     if (changedSettings.rowCount) out.settings = changedSettings.rows[0].doc;
+    else if (settingsWinner) out.settings = settingsWinner;
     res.json(out);
   } catch (e) {
     if (client) await client.query('rollback').catch(() => {});

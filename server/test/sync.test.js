@@ -649,6 +649,41 @@ test('a restore still wins against a week stamped in the future', { skip: !HAS_D
     'the restore reported success, so it must have actually happened');
 });
 
+/*
+ * A settings push that LOSES must still be told what beat it. The row's seq
+ * does not move on a conflict, so SELECT_CHANGED_SETTINGS (`seq > since`) does
+ * not return it to a client whose cursor is already past — and the client can
+ * only merge its habits against a document it has actually seen. Without this
+ * the losing device keeps its habit to itself forever.
+ */
+test('a losing settings push is handed the winner so it can merge', { skip: !HAS_DB }, async () => {
+  const token = await login();
+  const settings = (updatedAt, habits) => ({ habits, cats: [], activeCat: 'personal', updatedAt });
+
+  // The phone adds Gym, and wins.
+  await post('/sync', {
+    since: 0, weeks: {},
+    settings: settings(14000, [{ id: 'gym', name: 'Gym', updatedAt: 14000 }]),
+  }, token);
+
+  // Push this device's cursor PAST the settings row by writing a week. That is
+  // what opens the gap: `seq > since` will now skip the settings row.
+  const afterWeek = await (await post('/sync', {
+    since: 0, weeks: { '2026-07-13': week(1000, 'w') },
+  }, token)).json();
+
+  // The iPad pushes an older doc built from a stale list. It loses.
+  const r = await post('/sync', {
+    since: afterWeek.now, weeks: {},
+    settings: settings(13000, [{ id: 'read', name: 'Read', updatedAt: 13000 }]),
+  }, token);
+  const body = await r.json();
+
+  assert.deepEqual(body.conflicts, ['settings'], 'the older document must lose');
+  assert.ok(body.settings, 'a losing push must still be handed the winner — it cannot merge against nothing');
+  assert.deepEqual(body.settings.habits.map((h) => h.id), ['gym'], 'and the winner is the document that won');
+});
+
 test('history needs auth and rejects a nonsense ref', { skip: !HAS_DB }, async () => {
   assert.equal((await fetch(base + '/history?ref=2026-07-13')).status, 401);
   const token = await login();
