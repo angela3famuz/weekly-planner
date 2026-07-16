@@ -106,8 +106,18 @@ These are the traps The Village hit on the same platform. They cost hours the fi
 
 1. **Service Root Directory must be `server`.** Otherwise Railway builds the repo root,
    finds no `package.json`, and fails confusingly.
-2. **Add a PostgreSQL plugin to the project.** There is no `DATABASE_URL` without one, and
-   the service exits at boot saying so.
+2. **Add a PostgreSQL plugin, and give this service its OWN database.** There is no
+   `DATABASE_URL` without one, and the service exits at boot saying so.
+
+   **Point it at your database by name** — `DATABASE_URL = ${{planner-db.DATABASE_URL}}` —
+   not at whatever is called `Postgres`. If this service shares a Railway project with
+   another app, `${{Postgres.DATABASE_URL}}` will quietly resolve to *that* app's database,
+   and `migrate()` will create `weeks`, `settings`, `tokens` and `history` inside it. Those
+   names are generic; a collision would mean this service reading and writing another app's
+   rows as its own. Beyond that, a shared database means one restore rolls back both, one
+   leaked URL exposes both, and deleting one can take the other with it.
+
+   Rename the database (Settings → Name) to something you cannot confuse, e.g. `planner-db`.
 3. **Generate a domain AND set its target port to match.** The app listens on `PORT` (8080
    by default). A mismatch gives `502 Application failed to respond` with nothing useful in
    the logs.

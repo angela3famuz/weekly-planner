@@ -333,6 +333,19 @@ Settled 2026-07-15. These are now assumptions, not questions.
    appears in this repo, in a chat, or in a log.
 2. **Separate Railway service, separate database.** Not shared with The Village. Costs a
    little more; keeps two unrelated apps from sharing a blast radius or a deploy.
+
+   > **This is easy to get wrong, and it was.** The sync service was created inside The
+   > Village's Railway project, so `DATABASE_URL = ${{Postgres.DATABASE_URL}}` resolved to
+   > The Village's database and `migrate()` created its tables there. Nothing collided —
+   > checked: The Village has no `weeks`, `settings`, `tokens`, `history` or `sync_seq` —
+   > but `settings` and `tokens` are generic enough that it easily could have, and this
+   > service would then have read and written another app's rows as its own.
+   >
+   > **Point `DATABASE_URL` at a database you added *for this service*, by name**
+   > (`${{planner-db.DATABASE_URL}}`), never at whatever happens to be called `Postgres`.
+   > The Village's database holds children's medical data; a bug here must not be able to
+   > reach it, a restore of one must not roll back the other, and deleting one must not
+   > take the other with it.
 3. **Sync status stays quiet** — one line in the ⋯ sheet ("Synced 2 min ago", or what went
    wrong). Nothing permanently on screen. *Taken as the default; say so if you want it
    louder.*
