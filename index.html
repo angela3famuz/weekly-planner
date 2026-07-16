@@ -2427,9 +2427,20 @@
      and /restore works one week at a time while a replace touches all of them.
      A local snapshot also works offline and with sync off. */
   var UNDO_KEY = 'wp-restore-undo';
+  /* An undo point is a way back from a mistake you just made, not a time
+     machine. Left armed it becomes a trap: the label said "at 3:42 PM" with no
+     date, so weeks later it still read as this afternoon — and taking it would
+     throw away every week since, on every device. It also costs roughly a
+     second copy of the planner, which on a ~5MB iPhone origin is worth
+     reclaiming once it can no longer be the thing you meant. */
+  var UNDO_TTL_MS = 24 * 60 * 60 * 1000;
 
   function undoPoint() {
-    try { return JSON.parse(localStorage.getItem(UNDO_KEY)); } catch (e) { return null; }
+    var p;
+    try { p = JSON.parse(localStorage.getItem(UNDO_KEY)); } catch (e) { return null; }
+    if (!p || !p.backup || !validStamp(p.at)) return null;
+    if (Date.now() - p.at > UNDO_TTL_MS) { clearUndoPoint(); return null; }
+    return p;
   }
   function takeUndoPoint() {
     try {
@@ -2446,20 +2457,59 @@
     try { localStorage.removeItem(UNDO_KEY); } catch (e) {}
   }
 
+  /* "Changed since" has to mean since the restore FINISHED, not since the
+     snapshot was taken: the restore stamps every week it writes, so measuring
+     from `at` counted the restore's own writes and warned "1 changed since" on
+     the very screen that appears the moment it lands. If this write fails the
+     count falls back to over-warning, which is the safe direction. */
+  function stampUndoDone() {
+    var p = undoPoint();
+    if (!p) return;
+    p.doneAt = Date.now();
+    try { localStorage.setItem(UNDO_KEY, JSON.stringify(p)); } catch (e) {}
+  }
+
+  // What undo would COST, not just what it would give back: any week added or
+  // changed since the restore is thrown away by it.
+  function undoCost(p) {
+    var snap = p.backup.weeks || {};
+    var since = p.doneAt || p.at;
+    var added = 0, changed = 0;
+    weekKeys().forEach(function (k) {
+      var wIso = k.match(WEEK_KEY_RE)[1];
+      if (!Object.prototype.hasOwnProperty.call(snap, wIso)) { added++; return; }
+      try {
+        if (Number(JSON.parse(localStorage.getItem(k)).updatedAt || 0) > since) changed++;
+      } catch (e) {}
+    });
+    return { added: added, changed: changed };
+  }
+
   function paintUndoRestore() {
     var p = undoPoint();
     var wrap = document.getElementById('undoRestoreWrap');
-    if (!p || !p.backup) { wrap.style.display = 'none'; return; }
+    if (!p) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
     var n = Object.keys(p.backup.weeks || {}).length;
+    // A bare clock time reads as "this afternoon" forever. Date it.
     var when = '';
-    try { when = new Date(p.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+    try {
+      var d = new Date(p.at);
+      when = d.toLocaleDateString() + ' at ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } catch (e) {}
     var everywhere = SYNC.enabled() ? ', on every synced device' : '';
-    document.getElementById('undoRestoreText').textContent = n
-      ? 'You restored a backup' + (when ? ' at ' + when : '') + '. Undo puts back the ' + n +
+    var cost = undoCost(p);
+    var warn = (cost.added || cost.changed)
+      ? ' It will discard ' + [
+          cost.added ? cost.added + ' week' + (cost.added === 1 ? '' : 's') + ' added since' : '',
+          cost.changed ? cost.changed + ' changed since' : ''
+        ].filter(Boolean).join(' and ') + '.'
+      : '';
+    document.getElementById('undoRestoreText').textContent = (n
+      ? 'You restored a backup' + (when ? ' on ' + when : '') + '. Undo puts back the ' + n +
         ' week' + (n === 1 ? '' : 's') + ' that were here before' + everywhere + '.'
-      : 'You restored a backup' + (when ? ' at ' + when : '') +
-        '. There was nothing here before, so undo removes what it added' + everywhere + '.';
+      : 'You restored a backup' + (when ? ' on ' + when : '') +
+        '. There was nothing here before, so undo removes what it added' + everywhere + '.') + warn;
   }
 
   function isStandalone() {
@@ -2571,7 +2621,7 @@
      in this client calls /history or /restore, so it is only reachable by hand
      with curl. Do not lean on it in the UI until something here can read it. */
   function applyBackup(obj, mode) {
-    var added = 0, skipped = 0, removed = 0;
+    var added = 0, skipped = 0, removed = 0, failed = 0;
 
     if (mode === 'replace') {
       weekKeys().forEach(function (k) {
@@ -2611,7 +2661,13 @@
         // and queued nothing, stranding every restored week on this device.
         saveWeek(w, normalizeWeek(obj.weeks[w]));
         added++;
-      } catch (e) { skipped++; }
+      } catch (e) {
+        // Counting this as "skipped" told the user "kept N you already had",
+        // which in replace mode is a lie: nothing was kept, a write FAILED and
+        // that week still holds its stale pre-restore content. It is also not
+        // queued, so it will never right itself.
+        failed++;
+      }
     });
 
     if (Array.isArray(obj.habits)) {
@@ -2631,7 +2687,7 @@
       if (Array.isArray(obj.cats) && obj.cats.length) saveCats(obj.cats);
       if (obj.activeCat) { activeCat = obj.activeCat; localStorage.setItem('wp-active-cat', activeCat); }
     }
-    return { added: added, skipped: skipped, removed: removed };
+    return { added: added, skipped: skipped, removed: removed, failed: failed };
   }
 
   function doRestore(mode) {
@@ -2641,6 +2697,7 @@
     // to somewhere the user never was.
     var undoable = takeUndoPoint();
     var r = applyBackup(restoreCandidate, mode);
+    if (undoable) stampUndoDone();   // the boundary for "changed since"
     load();
     renderImportCat();
     selectedDay = todayKeyInWeek() || 'mon';
@@ -2650,6 +2707,9 @@
     ok.textContent = '✓ Restored ' + r.added + ' week' + (r.added === 1 ? '' : 's') +
       (r.skipped ? ' · kept ' + r.skipped + ' you already had' : '') +
       (r.removed ? ' · deleted ' + r.removed + ' the backup did not have' : '') + '.' +
+      (r.failed ? ' ⚠ ' + r.failed + ' week' + (r.failed === 1 ? '' : 's') +
+        ' could not be written — no room left, so ' + (r.failed === 1 ? 'it still holds' : 'they still hold') +
+        ' the old content.' : '') +
       (undoable ? '' : ' (Too little storage left to save an undo point.)');
     document.getElementById('restoreSummary').style.display = 'none';
     restoreCandidate = null;
@@ -2660,7 +2720,7 @@
 
   document.getElementById('undoRestoreBtn').onclick = function () {
     var p = undoPoint();
-    if (!p || !p.backup) return;
+    if (!p) { paintUndoRestore(); return; }   // expired between painting and clicking
     var n = Object.keys(p.backup.weeks || {}).length;
     var everywhere = SYNC.enabled() ? ' on all your synced devices' : '';
     var ask = n
@@ -2668,6 +2728,14 @@
         ' that were here before' + everywhere + '?'
       : 'Undo the restore? Nothing was here before it, so everything it added will be removed' +
         everywhere + '.';
+    // Name what it destroys. Undo is only safe while nothing has been done since.
+    var cost = undoCost(p);
+    if (cost.added || cost.changed) {
+      ask += '\n\nThis throws away ' + [
+        cost.added ? cost.added + ' week' + (cost.added === 1 ? '' : 's') + ' added since the restore' : '',
+        cost.changed ? cost.changed + ' changed since' : ''
+      ].filter(Boolean).join(' and ') + '.';
+    }
     if (!window.confirm(ask)) return;
 
     // Undo is a restore of the snapshot, so it replaces and propagates exactly
@@ -3099,6 +3167,11 @@
     localStorage.removeItem('wp-sync-token');
     localStorage.removeItem('wp-sync-cursor');
     localStorage.removeItem('wp-sync-dirty');
+    // Pending deletes go with the queue they belonged to. Signing in again
+    // re-queues from weekKeys(), and a deleted week is an absent key — so a
+    // kept tombstone could never be sent again, and would sit here for the life
+    // of the device.
+    localStorage.removeItem(TOMBSTONE_KEY);
     syncState.lastAt = 0;
     syncState.lastError = '';
     paintSyncStatus();
