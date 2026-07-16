@@ -81,8 +81,14 @@ export function createApp(opts = {}) {
     } catch (e) { next(e); }
   }
 
+  // `version` answers "is my fix actually deployed?" without reading logs.
+  // Railway sets RAILWAY_GIT_COMMIT_SHA; absent elsewhere, which is fine.
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, configured: Boolean(passphraseHash) });
+    res.json({
+      ok: true,
+      configured: Boolean(passphraseHash),
+      version: (process.env.RAILWAY_GIT_COMMIT_SHA || 'dev').slice(0, 7),
+    });
   });
 
   app.post('/auth', authGlobalLimiter, authIpLimiter, async (req, res, next) => {
