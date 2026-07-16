@@ -1187,6 +1187,9 @@
       data.updatedAt = Date.now();
     }
     localStorage.setItem(storageKey(), JSON.stringify(data));
+    // Writing a week un-deletes it: a pending tombstone would otherwise still
+    // be pushed and delete the week that has just been typed into.
+    clearTombstone(iso(weekStart));
     syncHooks.onLocalChange(iso(weekStart));
   }
 
@@ -1207,7 +1210,36 @@
       week.updatedAt = Date.now();
     }
     localStorage.setItem('wp-' + wIso, JSON.stringify(week));
+    clearTombstone(wIso);
     syncHooks.onLocalChange(wIso);
+  }
+
+  /* ---- Tombstones -----------------------------------------------------------
+     Locally a deleted week is simply an absent key — that is what the pull path
+     does with an incoming tombstone. Which left nothing to push: a delete made
+     here could never reach the other device, because the push builder skips a
+     queued ref whose key is gone.
+
+     So a pending delete is held in its own map rather than as a deleted week in
+     localStorage. Keeping it as a week would put it back in weekKeys(), where it
+     would count in backups, in the week list and in carry-over — and any later
+     edit to it would carry `deleted` along and delete it everywhere again. */
+  var TOMBSTONE_KEY = 'wp-sync-tombstones';
+
+  function tombstones() {
+    try { return JSON.parse(localStorage.getItem(TOMBSTONE_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function markDeleted(wIso) {
+    var m = tombstones();
+    m[wIso] = Date.now();
+    localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(m));
+    syncHooks.onLocalChange(wIso);
+  }
+  function clearTombstone(wIso) {
+    var m = tombstones();
+    if (!(wIso in m)) return;
+    delete m[wIso];
+    localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(m));
   }
 
   function el(tag, cls, text) {
@@ -2447,7 +2479,8 @@
       sum.style.display = '';
       sum.textContent = 'This backup holds ' + d.weeks + ' week' + (d.weeks === 1 ? '' : 's') +
         ' (' + d.range + ') and ' + d.blocks + ' time block' + (d.blocks === 1 ? '' : 's') +
-        (d.when ? ', saved ' + d.when : '') + '. Merge keeps every week you already have and only fills in missing ones. Replace all wipes what is here first.';
+        (d.when ? ', saved ' + d.when : '') + '. Merge keeps every week you already have and only fills in missing ones. Replace all wipes what is here first' +
+        (SYNC.enabled() ? ', on every synced device.' : '.');
     }
     updateRestoreBtns();
   }
@@ -2458,17 +2491,38 @@
     document.getElementById('restoreReplaceBtn').disabled = !on;
   }
 
+  /* Restoring is a deliberate act, so the backup becomes the truth — and with
+     sync on, "the truth" cannot mean only this device. A week the backup does
+     not have is deleted rather than merely dropped from here: dropping it left
+     the other device holding a copy it would push straight back, so the two
+     disagreed while the UI reported a clean sync.
+
+     Safe to be this blunt because the server keeps append-only history, so
+     restoring the wrong backup is itself undoable. */
   function applyBackup(obj, mode) {
+    var added = 0, skipped = 0, removed = 0;
+
     if (mode === 'replace') {
-      weekKeys().forEach(function (k) { localStorage.removeItem(k); });
+      weekKeys().forEach(function (k) {
+        var wIso = k.match(WEEK_KEY_RE)[1];
+        // Anything the backup carries is about to be overwritten below; only
+        // what it does not carry is a deletion.
+        if (Object.prototype.hasOwnProperty.call(obj.weeks, wIso)) return;
+        localStorage.removeItem(k);
+        markDeleted(wIso);
+        removed++;
+      });
     }
-    var added = 0, skipped = 0;
+
     Object.keys(obj.weeks).forEach(function (w) {
       var key = 'wp-' + w;
       // Merge must never clobber: a week already here always wins.
       if (mode === 'merge' && localStorage.getItem(key) !== null) { skipped++; return; }
       try {
-        localStorage.setItem(key, JSON.stringify(normalizeWeek(obj.weeks[w])));
+        // Stamped and queued like a typed edit — someone chose to restore this,
+        // so it must win and it must travel. A raw setItem here stamped nothing
+        // and queued nothing, stranding every restored week on this device.
+        saveWeek(w, normalizeWeek(obj.weeks[w]));
         added++;
       } catch (e) { skipped++; }
     });
@@ -2490,7 +2544,7 @@
       if (Array.isArray(obj.cats) && obj.cats.length) saveCats(obj.cats);
       if (obj.activeCat) { activeCat = obj.activeCat; localStorage.setItem('wp-active-cat', activeCat); }
     }
-    return { added: added, skipped: skipped };
+    return { added: added, skipped: skipped, removed: removed };
   }
 
   function doRestore(mode) {
@@ -2503,7 +2557,8 @@
     var ok = document.getElementById('restoreSuccess');
     ok.style.display = '';
     ok.textContent = '✓ Restored ' + r.added + ' week' + (r.added === 1 ? '' : 's') +
-      (r.skipped ? ' · kept ' + r.skipped + ' you already had' : '') + '.';
+      (r.skipped ? ' · kept ' + r.skipped + ' you already had' : '') +
+      (r.removed ? ' · deleted ' + r.removed + ' the backup did not have' : '') + '.';
     document.getElementById('restoreSummary').style.display = 'none';
     restoreCandidate = null;
     updateRestoreBtns();
@@ -2623,7 +2678,13 @@
   document.getElementById('restoreMergeBtn').onclick = function () { doRestore('merge'); };
   document.getElementById('restoreReplaceBtn').onclick = function () {
     var n = weekKeys().length;
-    if (n && !window.confirm('Replace all ' + n + ' week' + (n === 1 ? '' : 's') + ' on this device with the backup? This cannot be undone.')) return;
+    // "on this device" was true before sync and is a lie now: the backup becomes
+    // the truth everywhere, which is the whole point, but it must be said.
+    var where = SYNC.enabled() ? ' on all your synced devices' : ' on this device';
+    if (n && !window.confirm('Replace all ' + n + ' week' + (n === 1 ? '' : 's') + where +
+      ' with the backup?' + (SYNC.enabled()
+        ? '\n\nWeeks the backup does not have will be deleted everywhere, not just here.'
+        : '\n\nThis cannot be undone.'))) return;
     doRestore('replace');
   };
 
@@ -2667,7 +2728,10 @@
   function currentVersion(ref) {
     if (ref === 'settings') return Number(localStorage.getItem('wp-settings-updated') || 0);
     var raw = localStorage.getItem('wp-' + ref);
-    if (!raw) return 0;
+    // An absent week with a tombstone has a version too — the delete itself.
+    // Reporting 0 here would never match what was sent, so the ref would stay
+    // queued forever and re-push the same delete on every sync.
+    if (!raw) return Number(tombstones()[ref] || 0);
     try { return Number(JSON.parse(raw).updatedAt || 0); } catch (e) { return 0; }
   }
 
@@ -2734,7 +2798,18 @@
         sentVersion[ref] = payload.settings.updatedAt;
       } else {
         var raw = localStorage.getItem('wp-' + ref);
-        if (!raw) return;
+        if (!raw) {
+          // No week here, but a delete waiting to be told to the server. Without
+          // this the ref was silently skipped and the delete never left.
+          var at = tombstones()[ref];
+          if (!validStamp(at)) return;
+          var gone = emptyWeek();
+          gone.deleted = true;
+          gone.updatedAt = at;
+          payload.weeks[ref] = gone;
+          sentVersion[ref] = at;
+          return;
+        }
         try {
           var doc = JSON.parse(raw);
           // Written before sync existed: stamp it as old, and persist that so
@@ -2792,6 +2867,13 @@
       });
       SYNC.setDirty(stillDirty);
 
+      // A tombstone has done its job once the server has it: the delete is now
+      // the server's to propagate. Keeping them would grow this map for the life
+      // of the device.
+      sending.forEach(function (ref) {
+        if (stillDirty.indexOf(ref) === -1) clearTombstone(ref);
+      });
+
       syncState.lastAt = Date.now();
       syncState.backoff = 2000;
       if (applied.changed) render();
@@ -2825,8 +2907,14 @@
 
       if (local && Number(local.updatedAt || 0) > Number(incoming.updatedAt || 0)) return; // ours is newer
 
-      if (incoming.deleted) localStorage.removeItem(key);
-      else localStorage.setItem(key, JSON.stringify(incoming));
+      if (incoming.deleted) {
+        localStorage.removeItem(key);
+      } else {
+        localStorage.setItem(key, JSON.stringify(incoming));
+        // A newer copy arrived for a week deleted here, so the delete lost
+        // last-write-wins. Abandon it rather than re-send it and undo the win.
+        clearTombstone(ref);
+      }
       changed = true;
     });
 
