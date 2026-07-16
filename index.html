@@ -613,6 +613,15 @@
   }
   .btn.primary { background: var(--teal); }
   .btn:disabled { opacity: .4; cursor: default; }
+  /* Deliberately the loudest thing in the app: while this is up, nothing typed
+     is being kept, and every quieter treatment reads as dismissible. */
+  .storage-alarm {
+    background: var(--red); color: #fff;
+    font-size: 13px; font-weight: 700; line-height: 1.5;
+    padding: var(--s2) var(--s3); border-radius: var(--r-sm);
+    margin: 0 var(--s3) var(--s3);
+  }
+
   .import-error { color: var(--red); font-size: 13px; font-weight: 600; margin-top: var(--s2); white-space: pre-line; }
   .import-success { color: var(--green); font-size: 14px; font-weight: 700; margin-top: var(--s2); }
 
@@ -747,6 +756,10 @@
       </div>
     </div>
   </header>
+
+  <!-- Only ever shown when nothing typed is reaching the disk. There is no
+       quieter way to say that honestly. -->
+  <div class="storage-alarm" id="storageAlarm" style="display:none" role="alert" aria-live="assertive"></div>
 
   <div id="plannerView">
     <div class="grid">
@@ -1001,8 +1014,11 @@
     return JSON.parse(JSON.stringify(DEFAULT_CATS));
   }
   function saveCats(c) {
-    localStorage.setItem('wp-cats', JSON.stringify(c));
+    // Renaming a category runs from oninput, so a throw here would vanish the
+    // same way a full disk used to vanish a keystroke. See writeOrWarn.
+    if (!writeOrWarn('wp-cats', JSON.stringify(c))) return false;
     saveSettingsMeta();
+    return true;
   }
   function catById(id) {
     var c = getCats();
@@ -1108,8 +1124,9 @@
     return (list || getHabits()).filter(function (h) { return !h.deleted; });
   }
   function saveHabits(h) {
-    localStorage.setItem('wp-habits', JSON.stringify(normalizeHabits(h)));
+    if (!writeOrWarn('wp-habits', JSON.stringify(normalizeHabits(h)))) return false;
     saveSettingsMeta();
+    return true;
   }
   function itemStamp(x) { return validStamp(x && x.updatedAt) ? x.updatedAt : UNKNOWN_AGE; }
 
@@ -1238,17 +1255,72 @@
      second device would let its stale copy outrank the first device's real
      work. The week still syncs; it just loses any conflict, which is right,
      because the other side's version came from someone actually typing. */
+  /* ---- When the device is out of room ---------------------------------------
+     localStorage.setItem throws QuotaExceededError once the origin is full —
+     about 5MB on an iPhone. It used to throw straight out of save(), and so out
+     of the oninput/onclick handler that called it: render() never ran, so the
+     tick never appeared and the edit looked like it had simply not registered.
+     Tap again and the status cycles on — in memory — while nothing reaches the
+     disk and nothing is ever said. Reload and the lot is gone.
+
+     So this never throws. It frees what is safe to free and tries once more:
+     the undo snapshot is a second copy of the planner and is the only thing
+     here worth less than the edit being made. If it still will not fit, the
+     alarm goes up and stays up, because from that moment nothing typed is being
+     kept and there is no honest quiet way to say that. */
+  var storageFull = false;
+
+  function noteStorageOk() {
+    if (!storageFull) return;
+    storageFull = false;
+    paintStorageAlarm();
+  }
+
+  function writeOrWarn(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      noteStorageOk();
+      return true;
+    } catch (e) {
+      if (undoPoint()) {
+        // Spend the way-back to keep the work. The work is worth more.
+        clearUndoPoint();
+        try {
+          localStorage.setItem(key, value);
+          noteStorageOk();
+          return true;
+        } catch (e2) { /* still no room */ }
+      }
+      storageFull = true;
+      paintStorageAlarm();
+      return false;
+    }
+  }
+
+  function paintStorageAlarm() {
+    var el2 = document.getElementById('storageAlarm');
+    if (!el2) return;
+    el2.style.display = storageFull ? '' : 'none';
+    if (storageFull) {
+      el2.textContent = '⚠ This device is out of storage, so what you type is no longer being saved. ' +
+        'Open ⋯ and download a backup to keep what was saved up to now.';
+    }
+  }
+
   function save(opts) {
     if (opts && opts.keepStamp) {
       if (!validStamp(data.updatedAt)) data.updatedAt = UNKNOWN_AGE;
     } else {
       data.updatedAt = Date.now();
     }
-    localStorage.setItem(storageKey(), JSON.stringify(data));
+    // Nothing reached the disk, so there is nothing to queue and nothing to
+    // un-delete: saying otherwise would push the OLD content as if it were new.
+    if (!writeOrWarn(storageKey(), JSON.stringify(data))) return false;
     // Writing a week un-deletes it: a pending tombstone would otherwise still
     // be pushed and delete the week that has just been typed into.
     clearTombstone(iso(weekStart));
     syncHooks.onLocalChange(iso(weekStart));
+    return true;
   }
 
   /* save() can only write the week being looked at. Writing any OTHER week —
@@ -1267,9 +1339,10 @@
     } else {
       week.updatedAt = Date.now();
     }
-    localStorage.setItem('wp-' + wIso, JSON.stringify(week));
+    if (!writeOrWarn('wp-' + wIso, JSON.stringify(week))) return false;
     clearTombstone(wIso);
     syncHooks.onLocalChange(wIso);
+    return true;
   }
 
   /* ---- Tombstones -----------------------------------------------------------
@@ -2717,19 +2790,16 @@
       var key = 'wp-' + w;
       // Merge must never clobber: a week already here always wins.
       if (mode === 'merge' && localStorage.getItem(key) !== null) { skipped++; return; }
-      try {
-        // Stamped and queued like a typed edit — someone chose to restore this,
-        // so it must win and it must travel. A raw setItem here stamped nothing
-        // and queued nothing, stranding every restored week on this device.
-        saveWeek(w, normalizeWeek(obj.weeks[w]));
-        added++;
-      } catch (e) {
-        // Counting this as "skipped" told the user "kept N you already had",
-        // which in replace mode is a lie: nothing was kept, a write FAILED and
-        // that week still holds its stale pre-restore content. It is also not
-        // queued, so it will never right itself.
-        failed++;
-      }
+      // Stamped and queued like a typed edit — someone chose to restore this, so
+      // it must win and it must travel. A raw setItem here stamped nothing and
+      // queued nothing, stranding every restored week on this device.
+      //
+      // saveWeek reports rather than throws now, so this asks it. Counting a
+      // failure as "skipped" told the user "kept N you already had", which in
+      // replace mode is a lie: nothing was kept, the write FAILED and that week
+      // still holds its stale pre-restore content, unqueued, forever.
+      if (saveWeek(w, normalizeWeek(obj.weeks[w]))) added++;
+      else failed++;
     });
 
     if (Array.isArray(obj.habits)) {
@@ -3285,7 +3355,10 @@
       if (incoming.deleted) {
         localStorage.removeItem(key);
       } else {
-        localStorage.setItem(key, JSON.stringify(incoming));
+        // Warns rather than throws: throwing here abandoned the rest of the
+        // loop, so a full disk applied SOME of the response and left the cursor
+        // to advance past the rest.
+        if (!writeOrWarn(key, JSON.stringify(incoming))) return;
         // A newer copy arrived for a week deleted here, so the delete lost
         // last-write-wins. Abandon it rather than re-send it and undo the win.
         clearTombstone(ref);
