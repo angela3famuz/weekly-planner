@@ -2572,6 +2572,22 @@
         // Anything the backup carries is about to be overwritten below; only
         // what it does not carry is a deletion.
         if (Object.prototype.hasOwnProperty.call(obj.weeks, wIso)) return;
+
+        /* The current week cannot be deleted — load() runs moments later and
+           recreates it, because the app always needs one. Deleting it anyway
+           was silently wrong: the recreate goes through save(), which clears
+           the tombstone, so the delete never left the device, and the other
+           device's copy then won and brought the content back. Meanwhile this
+           counted it as deleted, so the message was a lie.
+
+           Emptying is what deletion means for a week that must exist, and it
+           wins and travels like any other edit. This is the common case, not an
+           exotic one: any backup older than Monday lacks the current week. */
+        if (wIso === iso(weekStart)) {
+          saveWeek(wIso, emptyWeek());
+          removed++;
+          return;
+        }
         localStorage.removeItem(k);
         markDeleted(wIso);
         removed++;
