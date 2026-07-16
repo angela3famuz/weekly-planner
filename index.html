@@ -1086,17 +1086,63 @@
     return raw
       .map(function (h) {
         if (typeof h === 'string') return { id: h, name: h };   // legacy: id === name
-        if (h && typeof h === 'object' && h.id) return { id: String(h.id), name: String(h.name == null ? '' : h.name) };
+        if (h && typeof h === 'object' && h.id) {
+          var out = { id: String(h.id), name: String(h.name == null ? '' : h.name) };
+          // Per-item age and tombstone, both optional. Anything written before
+          // habits merged rather than replaced has neither: no stamp means
+          // "old", which loses — the same rule a pre-sync week gets.
+          if (validStamp(h.updatedAt)) out.updatedAt = h.updatedAt;
+          if (h.deleted) out.deleted = true;
+          return out;
+        }
         return null;
       })
       .filter(Boolean);
   }
+  // The stored list keeps tombstones, because a delete has to be able to travel
+  // and to beat a device that still has the habit. Only the UI filters them.
   function getHabits() {
     try { return normalizeHabits(JSON.parse(localStorage.getItem('wp-habits'))); } catch (e) { return []; }
+  }
+  function liveHabits(list) {
+    return (list || getHabits()).filter(function (h) { return !h.deleted; });
   }
   function saveHabits(h) {
     localStorage.setItem('wp-habits', JSON.stringify(normalizeHabits(h)));
     saveSettingsMeta();
+  }
+  function itemStamp(x) { return validStamp(x && x.updatedAt) ? x.updatedAt : UNKNOWN_AGE; }
+
+  /* Habits and categories used to ride inside ONE last-write-wins document, so
+     a device holding a stale copy won with it and silently erased work: add
+     "Gym" on the phone at 14:00; an iPad that has been open (and therefore has
+     not pulled — sync fires on edit, focus, online, load, not on a timer) adds
+     "Read" at 16:00 from its stale list; 16:00 beats 14:00 and Gym is gone from
+     every device. No conflict, nothing shown, nothing to notice.
+
+     So merge per item rather than replacing the list: newest item wins, and a
+     delete is a tombstone rather than an absence — otherwise every merge with a
+     device that still has the habit would resurrect it. */
+  function mergeById(local, incoming) {
+    var out = local.slice(), at = {}, changed = false;
+    out.forEach(function (x, i) { at[x.id] = i; });
+    incoming.forEach(function (x) {
+      var i = at[x.id];
+      if (i === undefined) { at[x.id] = out.length; out.push(x); changed = true; return; }
+      if (itemStamp(x) > itemStamp(out[i])) { out[i] = x; changed = true; }
+    });
+    return { list: out, changed: changed };
+  }
+
+  // Do we hold anything the other side does not? Then the merged result is ours
+  // to push, however new their document claims to be.
+  function aheadOf(local, incoming) {
+    var theirs = {};
+    incoming.forEach(function (x) { theirs[x.id] = x; });
+    return local.some(function (x) {
+      var other = theirs[x.id];
+      return !other || itemStamp(x) > itemStamp(other);
+    });
   }
   // Habits and categories live outside the per-week docs, so they sync as one
   // small "settings" document with its own change time.
@@ -1388,8 +1434,12 @@
   function renderHabits() {
     var tbody = document.getElementById('habitRows');
     tbody.innerHTML = '';
+    // The stored list carries tombstones; only this loop hides them. Edits go
+    // through the habit object itself, which is a reference INTO `habits`, so
+    // saving `habits` keeps the tombstones a filtered copy would have dropped —
+    // and dropping them would resurrect every deleted habit on the next merge.
     var habits = getHabits();
-    habits.forEach(function (habit, hi) {
+    liveHabits(habits).forEach(function (habit, hi) {
       var tr = document.createElement('tr');
       var tdName = document.createElement('td');
       var nameWrap = el('div', 'habit-name');
@@ -1398,7 +1448,8 @@
       inp.setAttribute('aria-label', 'Habit name');
       // Renaming touches `name` only — `id` is what the ticks hang off.
       inp.oninput = function () {
-        habits[hi].name = inp.value;
+        habit.name = inp.value;
+        habit.updatedAt = Date.now();   // per-item age: this rename must beat a stale copy
         saveHabits(habits);
       };
       nameWrap.appendChild(inp);
@@ -1427,7 +1478,10 @@
       del.style.visibility = 'visible';
       del.setAttribute('aria-label', 'Delete habit');
       del.onclick = function () {
-        habits.splice(hi, 1);
+        // A tombstone, not a removal: an absence says nothing, so the other
+        // device — which still has the habit — would merge it straight back.
+        habit.deleted = true;
+        habit.updatedAt = Date.now();
         saveHabits(habits);
         delete data.habitChecks[habit.id];
         save(); renderHabits(); renderProgress();
@@ -1493,7 +1547,15 @@
       var inp = document.createElement('input');
       inp.value = c.name;
       inp.title = 'Click to select · type to rename';
-      inp.oninput = function () { c.name = inp.value; saveCats(cats); renderImportCat(); };
+      // Same per-item age as habits: a rename must beat a stale copy of the
+      // list rather than be undone by whichever device pushes its whole
+      // document last. Categories cannot be added or deleted, so they need a
+      // stamp but no tombstone.
+      inp.oninput = function () {
+        c.name = inp.value;
+        c.updatedAt = Date.now();
+        saveCats(cats); renderImportCat();
+      };
       chip.appendChild(inp);
       chip.addEventListener('click', function () {
         activeCat = c.id;
@@ -2675,12 +2737,9 @@
       var incoming = normalizeHabits(obj.habits);
       if (mode === 'replace') saveHabits(incoming);
       else {
-        // Union by id, not by object identity: indexOf would never match.
-        var have = getHabits();
-        var seen = {};
-        have.forEach(function (h) { seen[h.id] = true; });
-        incoming.forEach(function (h) { if (!seen[h.id]) { have.push(h); seen[h.id] = true; } });
-        saveHabits(have);
+        // Union by id, and where both sides have one, the newer wins — a plain
+        // union kept whatever was here, so a rename in the backup was dropped.
+        saveHabits(mergeById(getHabits(), incoming).list);
       }
     }
     if (mode === 'replace') {
@@ -2938,12 +2997,48 @@
     };
   }
 
+  /* Merges rather than replaces. Replacing is what lost a habit: the incoming
+     document is only "newer" as a whole, which says nothing about whether it
+     knows about the habit added on this device a minute earlier.
+
+     `ahead` is the other half. If we hold something the incoming document does
+     not, the merged list is ours to push — even though their document is newer
+     — so we stamp now and queue it. Without that, a device whose push LOST a
+     conflict would quietly keep its habit to itself forever. */
   function applySettingsDoc(doc) {
-    if (!doc) return;
-    if (Array.isArray(doc.habits)) localStorage.setItem('wp-habits', JSON.stringify(normalizeHabits(doc.habits)));
-    if (Array.isArray(doc.cats) && doc.cats.length) localStorage.setItem('wp-cats', JSON.stringify(doc.cats));
-    if (doc.activeCat) { activeCat = doc.activeCat; localStorage.setItem('wp-active-cat', activeCat); }
-    if (doc.updatedAt) localStorage.setItem('wp-settings-updated', String(doc.updatedAt));
+    if (!doc) return false;
+    var ahead = false, changed = false;
+
+    if (Array.isArray(doc.habits)) {
+      var mineH = getHabits(), theirsH = normalizeHabits(doc.habits);
+      var mh = mergeById(mineH, theirsH);
+      if (mh.changed) {
+        localStorage.setItem('wp-habits', JSON.stringify(normalizeHabits(mh.list)));
+        changed = true;
+      }
+      if (aheadOf(mineH, theirsH)) ahead = true;
+    }
+    if (Array.isArray(doc.cats) && doc.cats.length) {
+      var mineC = getCats(), theirsC = doc.cats;
+      var mc = mergeById(mineC, theirsC);
+      if (mc.changed) { localStorage.setItem('wp-cats', JSON.stringify(mc.list)); changed = true; }
+      if (aheadOf(mineC, theirsC)) ahead = true;
+    }
+    if (doc.activeCat && doc.activeCat !== activeCat) {
+      activeCat = doc.activeCat;
+      localStorage.setItem('wp-active-cat', activeCat);
+      changed = true;
+    }
+
+    if (ahead) {
+      // Stamps now and queues a push, so the union gets back to the server.
+      // Only when we are genuinely ahead — doing it unconditionally would have
+      // two devices re-pushing each other's documents forever.
+      saveSettingsMeta();
+    } else if (doc.updatedAt) {
+      localStorage.setItem('wp-settings-updated', String(doc.updatedAt));
+    }
+    return changed;
   }
 
   function syncStatusText() {
@@ -3111,13 +3206,11 @@
       changed = true;
     });
 
-    if (out.settings) {
-      var localSettingsAt = Number(localStorage.getItem('wp-settings-updated') || 0);
-      if (Number(out.settings.updatedAt || 0) >= localSettingsAt) {
-        applySettingsDoc(out.settings);
-        changed = true;
-      }
-    }
+    // No age gate any more. It was the whole-doc rule in miniature: skipping an
+    // older document is exactly how a habit the server knows about and this
+    // device does not stayed unknown. Merging per item is safe at any age, and
+    // it reports whether anything actually moved.
+    if (out.settings && applySettingsDoc(out.settings)) changed = true;
     if (changed) { load(); }
     return { changed: changed };
   }
@@ -3226,7 +3319,7 @@
 
   wireAdder('habitAdd', 'habitAddBtn', function (text) {
     var habits = getHabits();
-    habits.push({ id: newHabitId(), name: text });
+    habits.push({ id: newHabitId(), name: text, updatedAt: Date.now() });
     saveHabits(habits);
   }, function () { renderHabits(); });
 
