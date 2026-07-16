@@ -121,8 +121,24 @@ Verify with:
 
 ```sh
 curl https://<your-service>.up.railway.app/health
-# {"ok":true,"configured":true}
+# {"ok":true,"configured":true,"version":"a1b2c3d","database":"connected"}
 ```
+
+| Field | Means |
+| --- | --- |
+| `database: "connected"` | It really queried Postgres — not just "the process is alive" |
+| `configured: true` | `PASSPHRASE_HASH` is set; without it `/auth` returns 503 |
+| `version` | The deployed commit, so you can tell whether a fix is actually live |
+
+A `503` with `database: "unreachable"` means Postgres has gone away since boot. The reason is
+in the service logs, not in the reply — it names the host and schema, so it is not for
+whoever curls this.
+
+**On the Railway canvas:** the arrow between your service and Postgres only appears if you
+used a **variable reference** (`DATABASE_URL = ${{Postgres.DATABASE_URL}}`). Pasting the
+connection string literally works but draws no arrow — and then the value is frozen, so it
+silently breaks if Railway ever rotates the credentials. The reference is worth preferring
+for that reason, not for the arrow.
 
 ### If it crash-loops on boot
 
