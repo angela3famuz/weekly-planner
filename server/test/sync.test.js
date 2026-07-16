@@ -68,6 +68,7 @@ test('health proves the database is reachable, not just that we are alive', { sk
   assert.equal(r.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.configured, true);
+  assert.equal(body.passphrase, 'ok');
   assert.equal(body.database, 'connected');
   assert.ok(body.version, 'version answers "is my fix deployed?" without reading logs');
 });
@@ -89,6 +90,64 @@ test('health turns 503 when the database is broken, and leaks nothing', { skip: 
   } finally {
     await pool.query('alter table weeks_hidden rename to weeks');
   }
+});
+
+/* ---------------- the stored hash -----------------------------------------
+   Every way a pasted env var gets damaged used to produce the same 401 as a
+   genuinely wrong passphrase, so a correct passphrase looked like a typo.   */
+
+test('a damaged stored hash is recognised, not silently refused', { skip: !HAS_DB }, async () => {
+  const { hashState, normalizeStoredHash } = await import('../kdf.js');
+
+  // Damage that has exactly one intended meaning is repaired, not punished.
+  assert.equal(hashState(passphraseHash), 'ok');
+  assert.equal(hashState('  ' + passphraseHash + '  '), 'ok', 'stray whitespace');
+  assert.equal(hashState('"' + passphraseHash + '"'), 'ok', 'wrapped in quotes');
+  assert.equal(hashState("'" + passphraseHash + "'"), 'ok', 'single quotes');
+  assert.equal(hashState('PASSPHRASE_HASH=' + passphraseHash), 'ok', 'the whole line pasted');
+
+  // Damage that cannot be repaired is named.
+  assert.equal(hashState(''), 'missing');
+  assert.equal(hashState(undefined), 'missing');
+  assert.equal(hashState('scrypt'), 'malformed', 'truncated');
+  assert.equal(hashState('scrypt$$$$abc$def'), 'malformed', '$-parts eaten by shell expansion');
+  assert.equal(hashState('bcrypt$1$2$3$a$b'), 'malformed', 'not our format');
+  assert.equal(normalizeStoredHash('PASSPHRASE_HASH=' + passphraseHash), passphraseHash);
+});
+
+test('a repaired hash still accepts the correct passphrase end to end', { skip: !HAS_DB }, async () => {
+  const app = createApp({
+    passphraseHash: 'PASSPHRASE_HASH="' + passphraseHash + '"',   // both mistakes at once
+    allowedOrigins: [ORIGIN], authLimit: 50,
+  });
+  const s = app.listen(0);
+  await new Promise((r) => s.once('listening', r));
+  try {
+    const r = await fetch(`http://127.0.0.1:${s.address().port}/auth`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: PASSPHRASE }),
+    });
+    assert.equal(r.status, 200, 'a recoverable paste mistake must not cost anyone an afternoon');
+  } finally { await new Promise((r) => s.close(r)); }
+});
+
+test('an unusable hash returns 503, not 401 — it is the server at fault', { skip: !HAS_DB }, async () => {
+  const app = createApp({ passphraseHash: 'scrypt$$$$abc$def', allowedOrigins: [ORIGIN], authLimit: 50 });
+  const s = app.listen(0);
+  await new Promise((r) => s.once('listening', r));
+  try {
+    const port = s.address().port;
+    const r = await fetch(`http://127.0.0.1:${port}/auth`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: PASSPHRASE }),
+    });
+    assert.equal(r.status, 503, 'a broken hash is not a wrong passphrase');
+    assert.equal((await r.json()).error, 'passphrase_hash_malformed');
+
+    const h = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+    assert.equal(h.passphrase, 'malformed', 'health must say which');
+    assert.equal(h.configured, false, 'configured must not claim ok for an unusable hash');
+  } finally { await new Promise((r) => s.close(r)); }
 });
 
 test('wrong passphrase is rejected and issues no token', { skip: !HAS_DB }, async () => {

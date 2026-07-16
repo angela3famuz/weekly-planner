@@ -131,18 +131,30 @@ Verify with:
 
 ```sh
 curl https://<your-service>.up.railway.app/health
-# {"ok":true,"configured":true,"version":"a1b2c3d","database":"connected"}
+# {"ok":true,"configured":true,"passphrase":"ok","version":"a1b2c3d","database":"connected"}
 ```
 
 | Field | Means |
 | --- | --- |
 | `database: "connected"` | It really queried Postgres — not just "the process is alive" |
-| `configured: true` | `PASSPHRASE_HASH` is set; without it `/auth` returns 503 |
+| `passphrase: "ok"` | The stored hash is usable. `"missing"` or `"malformed"` means `/auth` refuses **everything**, however correct the passphrase |
+| `configured: true` | Shorthand for `passphrase === "ok"` |
 | `version` | The deployed commit, so you can tell whether a fix is actually live |
 
 A `503` with `database: "unreachable"` means Postgres has gone away since boot. The reason is
 in the service logs, not in the reply — it names the host and schema, so it is not for
 whoever curls this.
+
+### "That passphrase was not accepted" — but it is correct
+
+Check `/health`. If it reports `"passphrase":"malformed"`, the value of `PASSPHRASE_HASH` was
+damaged on its way into Railway and **no passphrase can work**, however carefully typed.
+
+The value must be the hash **alone**: `scrypt$N$r$p$salt$hash`. Surrounding quotes, stray
+whitespace, and an accidental `PASSPHRASE_HASH=` prefix are repaired automatically. What
+cannot be repaired — and shows as `malformed` — is a hash that is truncated, or whose `$`
+sections were eaten by shell expansion (`scrypt$$$$…`). Re-run
+`node tools/hash-passphrase.js` and paste the **Value** on its own.
 
 **On the Railway canvas:** the arrow between your service and Postgres only appears if you
 used a **variable reference** (`DATABASE_URL = ${{Postgres.DATABASE_URL}}`). Pasting the

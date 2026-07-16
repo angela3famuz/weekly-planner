@@ -60,10 +60,19 @@ const main = async () => {
 
   const hash = await hashPassphrase(p1);
 
-  console.log('\nPaste this into Railway as an environment variable:\n');
-  console.log('  PASSPHRASE_HASH=' + hash + '\n');
-  console.log('Then redeploy. Keep the passphrase itself in your password manager —');
-  console.log('it cannot be recovered from this hash, and you will need it on each device.\n');
+  // Printing "PASSPHRASE_HASH=<hash>" invites pasting the whole line into the
+  // value box, which silently breaks auth and looks exactly like a wrong
+  // passphrase. Name and value are shown separately for that reason.
+  console.log('\nAdd this to Railway as an environment variable.\n');
+  console.log('  Name:   PASSPHRASE_HASH');
+  console.log('  Value:  ' + hash + '\n');
+  console.log('Paste the Value on its own — no "PASSPHRASE_HASH=" in front, no quotes');
+  console.log('around it. It must start with "scrypt$" and have six $-separated parts.');
+  console.log('(If Railway\'s Raw Editor is used instead, the NAME=VALUE form is correct there.)\n');
+  console.log('Then redeploy and check /health — it reports "passphrase":"ok" when the');
+  console.log('value is usable, or "malformed" if it got damaged on the way in.\n');
+  console.log('Keep the passphrase itself in your password manager — it cannot be');
+  console.log('recovered from this hash, and you will need it on each device.\n');
 };
 
 main().catch((e) => { console.error('\n' + e.message); process.exit(1); });
