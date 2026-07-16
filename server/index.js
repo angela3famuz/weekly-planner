@@ -12,6 +12,7 @@ import {
 import {
   verifyPassphrase, newToken, storeToken, checkToken, revokeAllTokens, bearerFrom,
 } from './auth.js';
+import { hashState } from './kdf.js';
 
 const MAX_WEEKS_PER_SYNC = 400;      // ~8 years; a runaway guard, not a real limit
 const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
@@ -92,9 +93,14 @@ export function createApp(opts = {}) {
    * Railway sets RAILWAY_GIT_COMMIT_SHA; absent elsewhere, which is fine.
    */
   app.get('/health', async (_req, res) => {
+    // `configured: true` used to mean only "the env var is non-empty" — true
+    // even for a hash mangled beyond use, while /auth rejected every correct
+    // passphrase. `passphrase` says WHICH, so the two stop being one symptom.
+    const state = hashState(passphraseHash);
     const out = {
       ok: true,
-      configured: Boolean(passphraseHash),
+      configured: state === 'ok',
+      passphrase: state,
       version: (process.env.RAILWAY_GIT_COMMIT_SHA || 'dev').slice(0, 7),
       database: 'connected',
     };
@@ -113,7 +119,14 @@ export function createApp(opts = {}) {
 
   app.post('/auth', authGlobalLimiter, authIpLimiter, async (req, res, next) => {
     try {
-      if (!passphraseHash) return res.status(503).json({ error: 'not_configured' });
+      // A broken hash is a server fault, not a wrong passphrase. Saying 401
+      // here sent someone hunting a typo that did not exist.
+      const state = hashState(passphraseHash);
+      if (state !== 'ok') {
+        console.error('[config] PASSPHRASE_HASH is ' + state + ' — /auth cannot accept anything. ' +
+          'The value must be the hash alone: scrypt$N$r$p$salt$hash, no name, no quotes.');
+        return res.status(503).json({ error: state === 'missing' ? 'not_configured' : 'passphrase_hash_malformed' });
+      }
       const passphrase = req.body && req.body.passphrase;
       if (typeof passphrase !== 'string' || !passphrase) {
         return res.status(400).json({ error: 'passphrase_required' });
@@ -378,8 +391,13 @@ if (isMain) {
     process.exit(1);
   }
   console.log('[config] database target: ' + dbTarget());
-  if (!process.env.PASSPHRASE_HASH) {
+  const hs = hashState(process.env.PASSPHRASE_HASH);
+  if (hs === 'missing') {
     console.warn('[config] PASSPHRASE_HASH is not set — /auth will return 503. Run `node tools/hash-passphrase.js`.');
+  } else if (hs === 'malformed') {
+    console.error('[config] PASSPHRASE_HASH is SET BUT MALFORMED, so every correct passphrase will be refused.');
+    console.error('[config] The value must be the hash alone — scrypt$N$r$p$salt$hash — with no');
+    console.error('[config] "PASSPHRASE_HASH=" prefix, no quotes, and all six $-separated parts present.');
   }
   if (!envOrigins().length) {
     console.warn('[config] ALLOWED_ORIGINS is not set — no browser will be allowed to call this.');

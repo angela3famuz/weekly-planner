@@ -2713,7 +2713,16 @@
     });
     if (res.status === 401) throw new Error('That passphrase was not accepted.');
     if (res.status === 429) throw new Error('Too many attempts. Wait 15 minutes and try again.');
-    if (res.status === 503) throw new Error('The server has no passphrase set yet.');
+    if (res.status === 503) {
+      // A damaged hash on the server must never read as "you typed it wrong".
+      var why = await res.json().catch(function () { return {}; });
+      if (why.error === 'passphrase_hash_malformed') {
+        throw new Error("The server's PASSPHRASE_HASH is damaged, so no passphrase can work. " +
+          'In Railway its value must be the hash alone — starting "scrypt$", with no ' +
+          '"PASSPHRASE_HASH=" in front and no quotes around it.');
+      }
+      throw new Error('The server has no passphrase set yet.');
+    }
     if (!res.ok) throw new Error('The server said ' + res.status + '.');
     var out = await res.json();
     localStorage.setItem('wp-sync-url', base);
