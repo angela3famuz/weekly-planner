@@ -1083,6 +1083,18 @@
   function migrateItem(it) {
     if (it.status === undefined) it.status = it.done ? 'done' : '';
   }
+
+  /* Anything written before sync existed carries no updatedAt, and the server
+     rightly refuses it — it cannot resolve a conflict without one.
+
+     Such a week is stamped as OLD, never as now. Its real age is unknown, and
+     "unknown" must never beat a real edit: stamping Date.now() would mean the
+     second device to sign in silently overwrote the first device's genuine
+     history with its own stale copy, purely for connecting later. Losing every
+     conflict is the safe direction — and a week that exists only here still
+     uploads, because the server has nothing to weigh it against. */
+  var UNKNOWN_AGE = 1;
+  function validStamp(v) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v > 0; }
   function dateFromIso(s) {
     var p = String(s).split('-');
     return new Date(+p[0], +p[1] - 1, +p[2]);
@@ -1116,7 +1128,8 @@
     if (data.carriedAt) return 0;
 
     var prevIso = latestWeekIsoBefore(iso(weekStart));
-    if (!prevIso) { data.carriedAt = Date.now(); save(); return 0; }
+    // keepStamp: opening the planner is not editing it. See save().
+    if (!prevIso) { data.carriedAt = Date.now(); save({ keepStamp: true }); return 0; }
 
     var prev = readWeek(dateFromIso(prevIso));
     var moved = 0;
@@ -1134,7 +1147,7 @@
       });
     });
     data.carriedAt = Date.now();
-    save();
+    save({ keepStamp: true });
     return moved;
   }
 
@@ -1146,8 +1159,19 @@
   // a change time and flag the week for sync. syncHooks stays inert until the
   // sync module installs itself, so the planner works identically without it.
   var syncHooks = { onLocalChange: function () {} };
-  function save() {
-    data.updatedAt = Date.now();
+
+  /* opts.keepStamp: this write was derived, not typed — carry-over, a
+     migration — so it must not make the week look freshly edited. Opening the
+     planner is not editing it, and if it counted as one, merely opening a
+     second device would let its stale copy outrank the first device's real
+     work. The week still syncs; it just loses any conflict, which is right,
+     because the other side's version came from someone actually typing. */
+  function save(opts) {
+    if (opts && opts.keepStamp) {
+      if (!validStamp(data.updatedAt)) data.updatedAt = UNKNOWN_AGE;
+    } else {
+      data.updatedAt = Date.now();
+    }
     localStorage.setItem(storageKey(), JSON.stringify(data));
     syncHooks.onLocalChange(iso(weekStart));
   }
@@ -2542,11 +2566,12 @@
   }
 
   function settingsDoc() {
+    var at = Number(localStorage.getItem('wp-settings-updated'));
     return {
       habits: getHabits(),
       cats: getCats(),
       activeCat: activeCat,
-      updatedAt: Number(localStorage.getItem('wp-settings-updated') || Date.now())
+      updatedAt: validStamp(at) ? at : UNKNOWN_AGE
     };
   }
 
@@ -2606,8 +2631,14 @@
         if (!raw) return;
         try {
           var doc = JSON.parse(raw);
+          // Written before sync existed: stamp it as old, and persist that so
+          // the same week does not arrive with a different age next time.
+          if (!validStamp(doc.updatedAt)) {
+            doc.updatedAt = UNKNOWN_AGE;
+            localStorage.setItem('wp-' + ref, JSON.stringify(doc));
+          }
           payload.weeks[ref] = doc;
-          sentVersion[ref] = Number(doc.updatedAt || 0);
+          sentVersion[ref] = doc.updatedAt;
         } catch (e) {}
       }
     });
@@ -2628,8 +2659,18 @@
       if (res.status === 429) throw new Error('too many requests, will retry');
       if (!res.ok) {
         var body = await res.json().catch(function () { return {}; });
-        if (body.error === 'clock_skew') throw new Error("this device's clock is wrong, so syncing is paused");
-        throw new Error(body.error || ('server said ' + res.status));
+        // Raw codes like "bad_updated_at" tell the reader nothing about what
+        // to do; each of these is something a person can act on or ignore.
+        var SAYS = {
+          clock_skew: "this device's clock is wrong, so syncing is paused",
+          bad_updated_at: 'a week here is missing its change time — reload the page to repair it',
+          bad_week_key: 'a week here has an unreadable date, so it was not sent',
+          bad_doc: 'a week here is unreadable, so it was not sent',
+          too_many_weeks: 'too many weeks at once',
+          too_large: 'that week is too big to upload',
+          rate_limited: 'too many requests, will retry'
+        };
+        throw new Error(SAYS[body.error] || body.error || ('server said ' + res.status));
       }
 
       var out = await res.json();
