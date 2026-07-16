@@ -1168,9 +1168,10 @@
     data = readWeek(weekStart);
     carryOverIfDue();
   }
-  // Every mutation funnels through here, which makes it the one place to stamp
-  // a change time and flag the week for sync. syncHooks stays inert until the
-  // sync module installs itself, so the planner works identically without it.
+  // Every mutation funnels through save() or saveWeek(), which makes them the
+  // one place to stamp a change time and flag the week for sync. syncHooks
+  // stays inert until the sync module installs itself, so the planner works
+  // identically without it.
   var syncHooks = { onLocalChange: function () {} };
 
   /* opts.keepStamp: this write was derived, not typed — carry-over, a
@@ -1187,6 +1188,26 @@
     }
     localStorage.setItem(storageKey(), JSON.stringify(data));
     syncHooks.onLocalChange(iso(weekStart));
+  }
+
+  /* save() can only write the week being looked at. Writing any OTHER week —
+     an imported roster, a Sunday night block spilling into Monday — used to go
+     straight to localStorage, which skipped both halves of what save() does:
+     the week was never stamped and never queued. So an imported roster stayed
+     on the device that imported it, and because its updatedAt never moved, the
+     other device's next edit to that week outranked it and wiped the import.
+
+     These are typed edits — someone chose to import that roster — so they stamp
+     like typing rather than keepStamp'ing like carry-over. */
+  function saveWeek(wIso, week, opts) {
+    if (wIso === iso(weekStart) && week === data) return save(opts);
+    if (opts && opts.keepStamp) {
+      if (!validStamp(week.updatedAt)) week.updatedAt = UNKNOWN_AGE;
+    } else {
+      week.updatedAt = Date.now();
+    }
+    localStorage.setItem('wp-' + wIso, JSON.stringify(week));
+    syncHooks.onLocalChange(wIso);
   }
 
   function el(tag, cls, text) {
@@ -1901,8 +1922,7 @@
         text: props.text, status: props.status,
         cat: props.cat, color: props.color
       });
-      if (isCurrent) save();
-      else localStorage.setItem('wp-' + iso(ws), JSON.stringify(week));
+      saveWeek(iso(ws), week);
     });
     return parts.length;
   }
@@ -2154,8 +2174,7 @@
       byWeek[wIso].forEach(function (s) {
         week.blocks.push({ day: s.dayKey, start: s.start, end: s.end, text: s.label, status: '', cat: cat.id, color: cat.color });
       });
-      if (isCurrent) save();
-      else localStorage.setItem('wp-' + wIso, JSON.stringify(week));
+      saveWeek(wIso, week);
     });
     render();
     var ok = document.getElementById('importSuccess');
