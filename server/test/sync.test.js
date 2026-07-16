@@ -62,12 +62,33 @@ async function login() {
 
 const week = (updatedAt, focus) => ({ focus, blocks: [], updatedAt });
 
-test('health reports configured and which build is running', { skip: !HAS_DB }, async () => {
+test('health proves the database is reachable, not just that we are alive', { skip: !HAS_DB }, async () => {
   const r = await fetch(base + '/health');
   const body = await r.json();
+  assert.equal(r.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.configured, true);
+  assert.equal(body.database, 'connected');
   assert.ok(body.version, 'version answers "is my fix deployed?" without reading logs');
+});
+
+test('health turns 503 when the database is broken, and leaks nothing', { skip: !HAS_DB }, async () => {
+  // The old check never touched the database, so it reported ok:true while the
+  // service was useless. Break what it reads and prove it now notices.
+  await pool.query('alter table weeks rename to weeks_hidden');
+  try {
+    const r = await fetch(base + '/health');
+    const body = await r.json();
+    assert.equal(r.status, 503);
+    assert.equal(body.ok, false);
+    assert.equal(body.database, 'unreachable');
+    // The detail names the host and the schema — it belongs in the logs, not
+    // in a reply to whoever curls this.
+    assert.ok(!JSON.stringify(body).includes('weeks'), 'must not leak schema details');
+    assert.ok(!JSON.stringify(body).includes('relation'), 'must not leak the driver error');
+  } finally {
+    await pool.query('alter table weeks_hidden rename to weeks');
+  }
 });
 
 test('wrong passphrase is rejected and issues no token', { skip: !HAS_DB }, async () => {

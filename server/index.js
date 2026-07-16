@@ -81,14 +81,34 @@ export function createApp(opts = {}) {
     } catch (e) { next(e); }
   }
 
-  // `version` answers "is my fix actually deployed?" without reading logs.
-  // Railway sets RAILWAY_GIT_COMMIT_SHA; absent elsewhere, which is fine.
-  app.get('/health', (_req, res) => {
-    res.json({
+  /*
+   * A health check that does not touch its dependencies reports "ok" while
+   * being useless: this process can be perfectly alive with the database gone.
+   * So actually query it. Reading from `weeks` proves two things at once — the
+   * connection works AND the schema exists — without returning a row count,
+   * which would leak usage to an unauthenticated caller.
+   *
+   * `version` answers "is my fix actually deployed?" without reading logs.
+   * Railway sets RAILWAY_GIT_COMMIT_SHA; absent elsewhere, which is fine.
+   */
+  app.get('/health', async (_req, res) => {
+    const out = {
       ok: true,
       configured: Boolean(passphraseHash),
       version: (process.env.RAILWAY_GIT_COMMIT_SHA || 'dev').slice(0, 7),
-    });
+      database: 'connected',
+    };
+    try {
+      await pool.query('select 1 from weeks limit 1');
+    } catch (e) {
+      // The detail names the host and can name the schema, so it goes to the
+      // logs — not to whoever curls this.
+      console.error('[health] database unreachable: ' + describeError(e));
+      out.ok = false;
+      out.database = 'unreachable';
+      return res.status(503).json(out);
+    }
+    res.json(out);
   });
 
   app.post('/auth', authGlobalLimiter, authIpLimiter, async (req, res, next) => {
