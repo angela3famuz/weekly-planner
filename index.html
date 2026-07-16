@@ -615,6 +615,13 @@
   .btn:disabled { opacity: .4; cursor: default; }
   .import-error { color: var(--red); font-size: 13px; font-weight: 600; margin-top: var(--s2); white-space: pre-line; }
   .import-success { color: var(--green); font-size: 14px; font-weight: 700; margin-top: var(--s2); }
+
+  /* The way back from a restore, so it stops being the one irreversible thing. */
+  .undo-restore {
+    margin-top: var(--s3); padding: var(--s3);
+    border: 1px dashed var(--line); border-radius: var(--r-sm);
+  }
+  .undo-restore .step-text { margin-bottom: var(--s2); }
   .prev-list { margin-top: var(--s3); max-height: 40vh; overflow: auto; }
   .prev-item {
     display: flex; gap: var(--s2); align-items: center; padding: var(--s2) var(--s1);
@@ -923,6 +930,11 @@
     <div class="import-note" id="restoreSummary" style="display:none"></div>
     <div class="import-success" id="restoreSuccess" style="display:none"></div>
 
+    <div class="undo-restore" id="undoRestoreWrap" style="display:none">
+      <span class="step-text" id="undoRestoreText"></span>
+      <button class="btn step-btn" id="undoRestoreBtn">Undo the restore</button>
+    </div>
+
     <div class="sync-panel">
       <h3 class="sync-title">Sync across devices</h3>
       <p class="sync-status" id="syncStatus"></p>
@@ -1230,6 +1242,10 @@
     try { return JSON.parse(localStorage.getItem(TOMBSTONE_KEY)) || {}; } catch (e) { return {}; }
   }
   function markDeleted(wIso) {
+    // Only worth recording if there is a server to tell. A tombstone is cleared
+    // once it has been sent, so with sync off it would never be cleared and the
+    // map would grow for the life of the device while never being used.
+    if (!SYNC.enabled()) return;
     var m = tombstones();
     m[wIso] = Date.now();
     localStorage.setItem(TOMBSTONE_KEY, JSON.stringify(m));
@@ -2393,6 +2409,54 @@
 
   function backupFilename() { return 'weekly-planner-' + iso(new Date()) + '.json'; }
 
+  /* ---- Undo a restore --------------------------------------------------------
+     Restoring is the bluntest thing here — with sync on it replaces every device
+     and deletes what the backup lacks — so it snapshots everything first.
+
+     The snapshot is just a backup of what was here, which makes undo the very
+     same operation as a restore: replace with the snapshot. It therefore travels
+     to the other devices by the same path, tombstones and all.
+
+     Deliberately local rather than the server's history: history only holds
+     versions that were pushed, so a week edited and never synced is not in it,
+     and /restore works one week at a time while a replace touches all of them.
+     A local snapshot also works offline and with sync off. */
+  var UNDO_KEY = 'wp-restore-undo';
+
+  function undoPoint() {
+    try { return JSON.parse(localStorage.getItem(UNDO_KEY)); } catch (e) { return null; }
+  }
+  function takeUndoPoint() {
+    try {
+      localStorage.setItem(UNDO_KEY, JSON.stringify({ at: Date.now(), backup: collectBackup() }));
+      return true;
+    } catch (e) {
+      // Out of room. The restore the user asked for still happens; it just
+      // cannot be undone, and a stale snapshot would be worse than none.
+      try { localStorage.removeItem(UNDO_KEY); } catch (e2) {}
+      return false;
+    }
+  }
+  function clearUndoPoint() {
+    try { localStorage.removeItem(UNDO_KEY); } catch (e) {}
+  }
+
+  function paintUndoRestore() {
+    var p = undoPoint();
+    var wrap = document.getElementById('undoRestoreWrap');
+    if (!p || !p.backup) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    var n = Object.keys(p.backup.weeks || {}).length;
+    var when = '';
+    try { when = new Date(p.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+    var everywhere = SYNC.enabled() ? ', on every synced device' : '';
+    document.getElementById('undoRestoreText').textContent = n
+      ? 'You restored a backup' + (when ? ' at ' + when : '') + '. Undo puts back the ' + n +
+        ' week' + (n === 1 ? '' : 's') + ' that were here before' + everywhere + '.'
+      : 'You restored a backup' + (when ? ' at ' + when : '') +
+        '. There was nothing here before, so undo removes what it added' + everywhere + '.';
+  }
+
   function isStandalone() {
     return window.navigator.standalone === true ||
       (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
@@ -2549,6 +2613,10 @@
 
   function doRestore(mode) {
     if (!restoreCandidate) return;
+    // Before anything is touched, and only one level: a second restore replaces
+    // the snapshot, because a snapshot of an already-restored state would undo
+    // to somewhere the user never was.
+    var undoable = takeUndoPoint();
     var r = applyBackup(restoreCandidate, mode);
     load();
     renderImportCat();
@@ -2558,12 +2626,42 @@
     ok.style.display = '';
     ok.textContent = '✓ Restored ' + r.added + ' week' + (r.added === 1 ? '' : 's') +
       (r.skipped ? ' · kept ' + r.skipped + ' you already had' : '') +
-      (r.removed ? ' · deleted ' + r.removed + ' the backup did not have' : '') + '.';
+      (r.removed ? ' · deleted ' + r.removed + ' the backup did not have' : '') + '.' +
+      (undoable ? '' : ' (Too little storage left to save an undo point.)');
     document.getElementById('restoreSummary').style.display = 'none';
     restoreCandidate = null;
     updateRestoreBtns();
     refreshBackupStatus();
+    paintUndoRestore();
   }
+
+  document.getElementById('undoRestoreBtn').onclick = function () {
+    var p = undoPoint();
+    if (!p || !p.backup) return;
+    var n = Object.keys(p.backup.weeks || {}).length;
+    var everywhere = SYNC.enabled() ? ' on all your synced devices' : '';
+    var ask = n
+      ? 'Undo the restore and put back the ' + n + ' week' + (n === 1 ? '' : 's') +
+        ' that were here before' + everywhere + '?'
+      : 'Undo the restore? Nothing was here before it, so everything it added will be removed' +
+        everywhere + '.';
+    if (!window.confirm(ask)) return;
+
+    // Undo is a restore of the snapshot, so it replaces and propagates exactly
+    // the way the restore it is undoing did.
+    var r = applyBackup(p.backup, 'replace');
+    clearUndoPoint();
+    load();
+    renderImportCat();
+    selectedDay = todayKeyInWeek() || 'mon';
+    render();
+    var ok = document.getElementById('restoreSuccess');
+    ok.style.display = '';
+    ok.textContent = '✓ Undone — put back ' + r.added + ' week' + (r.added === 1 ? '' : 's') +
+      (r.removed ? ' · removed ' + r.removed + ' the restore had added' : '') + '.';
+    refreshBackupStatus();
+    paintUndoRestore();
+  };
 
   function refreshBackupStatus() {
     var n = weekKeys().length;
@@ -2590,6 +2688,9 @@
     document.getElementById('restoreText').value = '';
     refreshBackupStatus();
     paintSyncPanel();
+    // Survives reopening the panel, and a reload: the way back from a restore
+    // is worthless if it disappears the moment the panel is closed.
+    paintUndoRestore();
     backupOverlay.classList.add('open');
   };
   function paintSyncPanel() {
@@ -2680,11 +2781,12 @@
     var n = weekKeys().length;
     // "on this device" was true before sync and is a lie now: the backup becomes
     // the truth everywhere, which is the whole point, but it must be said.
+    // "This cannot be undone" was true before the undo button and is a lie now.
     var where = SYNC.enabled() ? ' on all your synced devices' : ' on this device';
     if (n && !window.confirm('Replace all ' + n + ' week' + (n === 1 ? '' : 's') + where +
       ' with the backup?' + (SYNC.enabled()
         ? '\n\nWeeks the backup does not have will be deleted everywhere, not just here.'
-        : '\n\nThis cannot be undone.'))) return;
+        : '') + '\n\nUndo is offered straight afterwards.')) return;
     doRestore('replace');
   };
 
