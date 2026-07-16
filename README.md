@@ -84,6 +84,31 @@ Shifts running past midnight are split into two blocks, one either side of 12am,
 flagged `OVERNIGHT` in the preview. Shifts already on your schedule are marked
 *already added* and unticked by default.
 
+## Sync across devices
+
+Optional, and off until you turn it on. Without it the planner is exactly what it was:
+local, offline, nothing uploaded.
+
+**⋯ → Sync across devices** — paste your server address and passphrase, once per device.
+After that it syncs on its own: on opening the app, when you come back to it, when you come
+back online, and a second or so after you stop typing. There's a **Sync now** button if you
+want to force it, and a quiet dot on the **⋯** button when something is waiting to upload.
+
+Deploying the server is a separate job — see [`server/README.md`](server/README.md).
+
+What to expect:
+
+- **Your device is the source of truth.** The server is a replica. Everything works offline;
+  changes queue and go up when you reconnect.
+- **The whole week is the unit.** Editing the *same week* on two devices means the later edit
+  wins and the other device's changes to that week are lost. For one person with two devices
+  that's rarely reachable — but it's real, and the planner tells you when it happens rather
+  than hiding it. See [`docs/sync-design.md`](docs/sync-design.md) §7.
+- **Nothing can be destroyed by a sync failure.** A wrong passphrase, a dead token, a server
+  that's down — all leave your local data untouched and the planner working.
+- **The server keeps every version**, so an accidental delete is recoverable — which is the
+  bit that lets manual backups stop being your safety net.
+
 ## Backup & restore
 
 **⋯ → Download backup** writes a JSON file holding every week, your habits and your

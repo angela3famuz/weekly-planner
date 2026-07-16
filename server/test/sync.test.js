@@ -62,9 +62,12 @@ async function login() {
 
 const week = (updatedAt, focus) => ({ focus, blocks: [], updatedAt });
 
-test('health reports configured', { skip: !HAS_DB }, async () => {
+test('health reports configured and which build is running', { skip: !HAS_DB }, async () => {
   const r = await fetch(base + '/health');
-  assert.deepEqual(await r.json(), { ok: true, configured: true });
+  const body = await r.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.configured, true);
+  assert.ok(body.version, 'version answers "is my fix deployed?" without reading logs');
 });
 
 test('wrong passphrase is rejected and issues no token', { skip: !HAS_DB }, async () => {

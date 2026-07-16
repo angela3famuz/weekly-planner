@@ -568,6 +568,21 @@
   }
   .backup-stat { font-weight: 700; color: var(--ink); }
 
+  /* Sync */
+  .sync-panel { margin-top: var(--s4); padding-top: var(--s4); border-top: 1px dashed var(--line); }
+  .sync-title { font-size: 15px; margin-bottom: var(--s2); }
+  .sync-status { font-size: 13px; color: var(--ink-2); margin-bottom: var(--s3); line-height: 1.5; }
+  .sync-hint { font-size: 12px; color: var(--ink-3); margin: var(--s2) 0 0; line-height: 1.5; }
+  .sync-btns { display: flex; gap: var(--s2); flex-wrap: wrap; }
+  .sync-btns .btn { flex: 1; min-width: 120px; }
+  /* A quiet dot on the ⋯ button: something is pending or in flight. */
+  .sync-badge {
+    position: absolute; top: -3px; right: -3px;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--teal); border: 1.5px solid var(--bg);
+  }
+  #backupBtn { position: relative; overflow: visible; }
+
   .prev-overnight {
     font-size: 10px; font-weight: 800; letter-spacing: .5px; white-space: nowrap;
     background: var(--purple); border-radius: 4px; padding: 2px 5px;
@@ -698,7 +713,9 @@
         <button class="icon-btn" id="importBtn" aria-label="Import shifts from a photo">
           &#128247;<span class="icon-label">Import shifts</span>
         </button>
-        <button class="icon-btn plain" id="backupBtn" aria-label="Backup and restore">&#8943;</button>
+        <button class="icon-btn plain" id="backupBtn" aria-label="Backup, restore and sync">
+          &#8943;<span class="sync-badge" id="syncBadge" style="display:none"></span>
+        </button>
       </div>
       <div class="progress-wrap">
         <div class="progress-bar">
@@ -893,6 +910,35 @@
     <div class="import-note" id="restoreSummary" style="display:none"></div>
     <div class="import-success" id="restoreSuccess" style="display:none"></div>
 
+    <div class="sync-panel">
+      <h3 class="sync-title">Sync across devices</h3>
+      <p class="sync-status" id="syncStatus"></p>
+
+      <div id="syncSignedOut">
+        <label class="fld">
+          <span class="fld-label">Server address</span>
+          <input type="url" id="syncUrl" inputmode="url" autocomplete="off"
+                 placeholder="https://…up.railway.app">
+        </label>
+        <label class="fld">
+          <span class="fld-label">Passphrase</span>
+          <input type="password" id="syncPass" autocomplete="current-password"
+                 placeholder="your four words">
+        </label>
+        <button class="btn primary step-btn" id="syncSignInBtn">Turn on sync</button>
+        <div class="import-error" id="syncError" style="display:none"></div>
+        <p class="sync-hint">Your planner keeps working offline either way. Nothing uploads
+          until you turn this on.</p>
+      </div>
+
+      <div id="syncSignedIn" style="display:none">
+        <div class="sync-btns">
+          <button class="btn" id="syncNowBtn">Sync now</button>
+          <button class="btn" id="syncOutBtn">Turn off on this device</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-btns">
       <button class="btn" id="backupClose">Close</button>
       <button class="btn" id="restoreMergeBtn" disabled>Merge</button>
@@ -929,7 +975,10 @@
     } catch (e) {}
     return JSON.parse(JSON.stringify(DEFAULT_CATS));
   }
-  function saveCats(c) { localStorage.setItem('wp-cats', JSON.stringify(c)); }
+  function saveCats(c) {
+    localStorage.setItem('wp-cats', JSON.stringify(c));
+    saveSettingsMeta();
+  }
   function catById(id) {
     var c = getCats();
     for (var i = 0; i < c.length; i++) if (c[i].id === id) return c[i];
@@ -1020,7 +1069,16 @@
   function getHabits() {
     try { return normalizeHabits(JSON.parse(localStorage.getItem('wp-habits'))); } catch (e) { return []; }
   }
-  function saveHabits(h) { localStorage.setItem('wp-habits', JSON.stringify(normalizeHabits(h))); }
+  function saveHabits(h) {
+    localStorage.setItem('wp-habits', JSON.stringify(normalizeHabits(h)));
+    saveSettingsMeta();
+  }
+  // Habits and categories live outside the per-week docs, so they sync as one
+  // small "settings" document with its own change time.
+  function saveSettingsMeta() {
+    localStorage.setItem('wp-settings-updated', String(Date.now()));
+    syncHooks.onLocalChange('settings');
+  }
 
   function migrateItem(it) {
     if (it.status === undefined) it.status = it.done ? 'done' : '';
@@ -1084,7 +1142,15 @@
     data = readWeek(weekStart);
     carryOverIfDue();
   }
-  function save() { localStorage.setItem(storageKey(), JSON.stringify(data)); }
+  // Every mutation funnels through here, which makes it the one place to stamp
+  // a change time and flag the week for sync. syncHooks stays inert until the
+  // sync module installs itself, so the planner works identically without it.
+  var syncHooks = { onLocalChange: function () {} };
+  function save() {
+    data.updatedAt = Date.now();
+    localStorage.setItem(storageKey(), JSON.stringify(data));
+    syncHooks.onLocalChange(iso(weekStart));
+  }
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -2338,8 +2404,65 @@
     document.getElementById('restoreFile').value = '';
     document.getElementById('restoreText').value = '';
     refreshBackupStatus();
+    paintSyncPanel();
     backupOverlay.classList.add('open');
   };
+  function paintSyncPanel() {
+    var on = SYNC.enabled();
+    document.getElementById('syncSignedOut').style.display = on ? 'none' : '';
+    document.getElementById('syncSignedIn').style.display = on ? '' : 'none';
+    document.getElementById('syncError').style.display = 'none';
+    if (!on) document.getElementById('syncUrl').value = SYNC.url();
+    paintSyncStatus();
+  }
+
+  document.getElementById('syncSignInBtn').onclick = async function () {
+    var btn = this;
+    var err = document.getElementById('syncError');
+    var url = document.getElementById('syncUrl').value.trim();
+    var pass = document.getElementById('syncPass').value;
+    err.style.display = 'none';
+    // The passphrase goes over this connection, so demand TLS. localhost is the
+    // one exception: it never leaves the machine, and it is how this gets
+    // tested. It is not a loophole — the hosted planner is on https, and
+    // browsers block mixed content, so an http server is unreachable there.
+    var httpsOk = /^https:\/\/.+/.test(url);
+    var localOk = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url);
+    if (!httpsOk && !localOk) {
+      err.style.display = '';
+      err.textContent = 'The server address must start with https:// — your passphrase travels over it.';
+      return;
+    }
+    if (!pass) { err.style.display = ''; err.textContent = 'Enter your passphrase.'; return; }
+    btn.disabled = true; btn.textContent = 'Connecting…';
+    try {
+      await syncSignIn(url, pass);
+      document.getElementById('syncPass').value = '';   // never leave it lying in the DOM
+      paintSyncPanel();
+      await runSync({ manual: true });
+      paintSyncPanel();
+    } catch (e) {
+      err.style.display = ''; err.textContent = e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Turn on sync';
+    }
+  };
+
+  document.getElementById('syncNowBtn').onclick = async function () {
+    var btn = this;
+    btn.disabled = true;
+    await runSync({ manual: true });
+    paintSyncPanel();
+    refreshBackupStatus();
+    btn.disabled = false;
+  };
+
+  document.getElementById('syncOutBtn').onclick = function () {
+    if (!window.confirm('Turn off sync on this device? Your planner stays here — nothing is deleted.')) return;
+    syncSignOut();
+    paintSyncPanel();
+  };
+
   document.getElementById('backupClose').onclick = function () { backupOverlay.classList.remove('open'); };
   backupOverlay.addEventListener('click', function (e) {
     if (e.target === backupOverlay) backupOverlay.classList.remove('open');
@@ -2373,6 +2496,251 @@
     if (n && !window.confirm('Replace all ' + n + ' week' + (n === 1 ? '' : 's') + ' on this device with the backup? This cannot be undone.')) return;
     doRestore('replace');
   };
+
+  /* ================= Sync =================
+     localStorage stays the source of truth; the server is a replica. Sync is
+     entirely optional — with no server URL and passphrase set, none of this
+     runs and the planner behaves exactly as it did before.
+
+     See docs/sync-design.md. The rule that matters most is in §6: never apply
+     a version older than what is on the device. */
+
+  var SYNC = {
+    url: function () { return localStorage.getItem('wp-sync-url') || ''; },
+    token: function () { return localStorage.getItem('wp-sync-token') || ''; },
+    cursor: function () { return Number(localStorage.getItem('wp-sync-cursor') || 0); },
+    setCursor: function (n) { localStorage.setItem('wp-sync-cursor', String(n)); },
+    dirty: function () {
+      try { return JSON.parse(localStorage.getItem('wp-sync-dirty')) || []; } catch (e) { return []; }
+    },
+    setDirty: function (list) {
+      localStorage.setItem('wp-sync-dirty', JSON.stringify(list.filter(function (v, i, a) { return a.indexOf(v) === i; })));
+    },
+    enabled: function () { return Boolean(this.url() && this.token()); }
+  };
+
+  var syncState = { busy: false, lastError: '', lastAt: 0, retryTimer: null, backoff: 2000 };
+
+  function markDirty(ref) {
+    var list = SYNC.dirty();
+    if (list.indexOf(ref) === -1) { list.push(ref); SYNC.setDirty(list); }
+  }
+
+  // Installed over the inert default now that the sync code exists.
+  syncHooks.onLocalChange = function (ref) {
+    if (!SYNC.enabled()) return;
+    markDirty(ref);
+    scheduleSync();
+  };
+
+  // The version of a ref as it stands on this device right now.
+  function currentVersion(ref) {
+    if (ref === 'settings') return Number(localStorage.getItem('wp-settings-updated') || 0);
+    var raw = localStorage.getItem('wp-' + ref);
+    if (!raw) return 0;
+    try { return Number(JSON.parse(raw).updatedAt || 0); } catch (e) { return 0; }
+  }
+
+  function settingsDoc() {
+    return {
+      habits: getHabits(),
+      cats: getCats(),
+      activeCat: activeCat,
+      updatedAt: Number(localStorage.getItem('wp-settings-updated') || Date.now())
+    };
+  }
+
+  function applySettingsDoc(doc) {
+    if (!doc) return;
+    if (Array.isArray(doc.habits)) localStorage.setItem('wp-habits', JSON.stringify(normalizeHabits(doc.habits)));
+    if (Array.isArray(doc.cats) && doc.cats.length) localStorage.setItem('wp-cats', JSON.stringify(doc.cats));
+    if (doc.activeCat) { activeCat = doc.activeCat; localStorage.setItem('wp-active-cat', activeCat); }
+    if (doc.updatedAt) localStorage.setItem('wp-settings-updated', String(doc.updatedAt));
+  }
+
+  function syncStatusText() {
+    if (!SYNC.enabled()) return 'Not syncing — this device only.';
+    if (syncState.busy) return 'Syncing…';
+    if (syncState.lastError) return 'Last sync failed: ' + syncState.lastError;
+    if (!syncState.lastAt) return 'Connected. Not synced yet.';
+    var mins = Math.round((Date.now() - syncState.lastAt) / 60000);
+    var when = mins < 1 ? 'just now' : mins === 1 ? '1 minute ago' : mins + ' minutes ago';
+    var pending = SYNC.dirty().length;
+    return 'Synced ' + when + (pending ? ' · ' + pending + ' waiting to upload' : '');
+  }
+
+  function paintSyncStatus() {
+    var el2 = document.getElementById('syncStatus');
+    if (el2) el2.textContent = syncStatusText();
+    var badge = document.getElementById('syncBadge');
+    if (badge) badge.style.display = SYNC.enabled() && (syncState.busy || SYNC.dirty().length) ? '' : 'none';
+  }
+
+  function scheduleSync() {
+    clearTimeout(syncState.retryTimer);
+    // Debounced so typing in the notes field does not fire a request per keystroke.
+    syncState.retryTimer = setTimeout(function () { runSync(); }, 1500);
+    paintSyncStatus();
+  }
+
+  async function runSync(opts) {
+    opts = opts || {};
+    if (!SYNC.enabled() || syncState.busy) return;
+    syncState.busy = true;
+    syncState.lastError = '';
+    paintSyncStatus();
+
+    // Record not just WHICH refs we are sending but the exact version of each.
+    // An edit made while the request is in flight bumps updatedAt, and the
+    // comparison afterwards is what keeps that edit queued instead of dropping
+    // it on the floor.
+    var sending = SYNC.dirty();
+    var sentVersion = {};
+    var payload = { since: SYNC.cursor(), weeks: {}, settings: null };
+    sending.forEach(function (ref) {
+      if (ref === 'settings') {
+        payload.settings = settingsDoc();
+        sentVersion[ref] = payload.settings.updatedAt;
+      } else {
+        var raw = localStorage.getItem('wp-' + ref);
+        if (!raw) return;
+        try {
+          var doc = JSON.parse(raw);
+          payload.weeks[ref] = doc;
+          sentVersion[ref] = Number(doc.updatedAt || 0);
+        } catch (e) {}
+      }
+    });
+
+    try {
+      var res = await fetch(SYNC.url().replace(/\/+$/, '') + '/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SYNC.token() },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.status === 401) {
+        // The token is dead. Never touch local data over this — sync must not be
+        // able to destroy what is on the device just because auth failed.
+        localStorage.removeItem('wp-sync-token');
+        throw new Error('signed out — enter your passphrase again');
+      }
+      if (res.status === 429) throw new Error('too many requests, will retry');
+      if (!res.ok) {
+        var body = await res.json().catch(function () { return {}; });
+        if (body.error === 'clock_skew') throw new Error("this device's clock is wrong, so syncing is paused");
+        throw new Error(body.error || ('server said ' + res.status));
+      }
+
+      var out = await res.json();
+      var applied = applyServerResponse(out);
+      SYNC.setCursor(out.now);
+
+      // Clear a ref only if the version we sent is still the version on the
+      // device. If it changed mid-flight it stays queued; if it lost a conflict
+      // the server's copy has already replaced it, so there is nothing to send.
+      var stillDirty = SYNC.dirty().filter(function (ref) {
+        if (!(ref in sentVersion)) return true;                       // queued mid-flight
+        return currentVersion(ref) !== sentVersion[ref];
+      });
+      SYNC.setDirty(stillDirty);
+
+      syncState.lastAt = Date.now();
+      syncState.backoff = 2000;
+      if (applied.changed) render();
+      if (out.conflicts && out.conflicts.length) noteConflicts(out.conflicts);
+    } catch (e) {
+      // Offline is the normal case, not an error worth shouting about.
+      syncState.lastError = (e && e.message) || 'network error';
+      if (!opts.manual) {
+        syncState.backoff = Math.min(syncState.backoff * 2, 60000);
+        clearTimeout(syncState.retryTimer);
+        syncState.retryTimer = setTimeout(function () { runSync(); }, syncState.backoff);
+      }
+    } finally {
+      syncState.busy = false;
+      paintSyncStatus();
+    }
+  }
+
+  /* The response echoes back weeks we just pushed. Applying one blindly would
+     clobber an edit made while the request was in flight — a ~200ms window that
+     would silently eat keystrokes and get blamed on "sync being flaky".
+     Never apply a version older than what is on the device. */
+  function applyServerResponse(out) {
+    var changed = false;
+    Object.keys(out.weeks || {}).forEach(function (ref) {
+      var incoming = out.weeks[ref];
+      var key = 'wp-' + ref;
+      var localRaw = localStorage.getItem(key);
+      var local = null;
+      try { local = localRaw ? JSON.parse(localRaw) : null; } catch (e) {}
+
+      if (local && Number(local.updatedAt || 0) > Number(incoming.updatedAt || 0)) return; // ours is newer
+
+      if (incoming.deleted) localStorage.removeItem(key);
+      else localStorage.setItem(key, JSON.stringify(incoming));
+      changed = true;
+    });
+
+    if (out.settings) {
+      var localSettingsAt = Number(localStorage.getItem('wp-settings-updated') || 0);
+      if (Number(out.settings.updatedAt || 0) >= localSettingsAt) {
+        applySettingsDoc(out.settings);
+        changed = true;
+      }
+    }
+    if (changed) { load(); }
+    return { changed: changed };
+  }
+
+  function noteConflicts(refs) {
+    var mine = refs.filter(function (r) { return r !== 'settings'; });
+    if (!mine.length) return;
+    syncState.lastError = '';
+    var el2 = document.getElementById('syncStatus');
+    if (el2) {
+      el2.textContent = 'A week was changed on another device — that version was kept (' + mine.join(', ') + ').';
+    }
+  }
+
+  async function syncSignIn(url, passphrase) {
+    var base = url.replace(/\/+$/, '');
+    var res = await fetch(base + '/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: passphrase })
+    });
+    if (res.status === 401) throw new Error('That passphrase was not accepted.');
+    if (res.status === 429) throw new Error('Too many attempts. Wait 15 minutes and try again.');
+    if (res.status === 503) throw new Error('The server has no passphrase set yet.');
+    if (!res.ok) throw new Error('The server said ' + res.status + '.');
+    var out = await res.json();
+    localStorage.setItem('wp-sync-url', base);
+    localStorage.setItem('wp-sync-token', out.token);
+    // Everything already here must be offered to the server, so a first sync
+    // from a device with history uploads it rather than silently pulling over it.
+    var all = weekKeys().map(function (k) { return k.slice(3); });
+    all.push('settings');
+    SYNC.setDirty(all);
+    SYNC.setCursor(0);
+  }
+
+  function syncSignOut() {
+    localStorage.removeItem('wp-sync-token');
+    localStorage.removeItem('wp-sync-cursor');
+    localStorage.removeItem('wp-sync-dirty');
+    syncState.lastAt = 0;
+    syncState.lastError = '';
+    paintSyncStatus();
+  }
+
+  // Pick up the other device's edits when returning to the app, and flush
+  // whatever accumulated while offline.
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && SYNC.enabled()) runSync();
+  });
+  window.addEventListener('online', function () { if (SYNC.enabled()) runSync(); });
 
   /* ================= Shared ================= */
   function render() {
@@ -2478,6 +2846,8 @@
   selectedDay = todayKeyInWeek() || 'mon';
   render();
   setTab(localStorage.getItem('wp-tab') || 'planner');
+  paintSyncStatus();
+  if (SYNC.enabled()) runSync();   // pick up the other device on open
 
   // Offline support. Requires a secure context, so it is skipped on file://
   // and only registers once the page has settled.
