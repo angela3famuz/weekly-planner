@@ -449,6 +449,19 @@
   .tblock.compact .tb-time { display: none; }
   .tblock.ghost { opacity: .6; pointer-events: none; }
 
+  /* Lanes narrow a block, so trim what a full-width one can afford. Driven by
+     measured width, not lane count: two lanes is roomy on a phone's one-day
+     column and cramped in an iPad's seven, and the same class cannot be right
+     for both. The title is what has to survive — the editor sheet still moves,
+     retimes and reticks anything trimmed here. */
+  .tblock.tight { padding-left: var(--s1); padding-right: var(--s1); }
+  .tblock.tight .tb-grip, .tblock.tight .tb-time { display: none; }
+  /* Narrower than this the status circle alone would leave the label 3px and
+     flex would collapse it to nothing — an invisible title is no better than
+     the overlap this replaced. */
+  .tblock.sliver .tb-status { display: none; }
+  .tblock.sliver .tb-label { font-size: 12px; }
+
   /* Category legend */
   .legend { display: flex; gap: var(--s2); margin-bottom: var(--s3); flex-wrap: wrap; align-items: center; }
   .legend-title {
@@ -1498,8 +1511,8 @@
   function renderSchedHint() {
     // Touch cannot drag-to-create: that gesture is reserved for scrolling the page.
     document.getElementById('schedHint').textContent = isWide()
-      ? 'Click a block to edit it · click or drag an empty slot to create one · drag to move · drag the bottom handle to resize · click the circle to mark done ✓ / missed ✕'
-      : 'Tap a block to edit it — label, day, times, category, delete · tap an empty slot to add an hour · drag ✥ to move · drag the bottom handle to resize · tap the circle to mark done ✓ / missed ✕';
+      ? 'Click a block to edit it · click or drag an empty slot to start one · drag to move · drag the bottom handle to resize · click the circle to mark done ✓ / missed ✕'
+      : 'Tap a block to edit it — label, day, times, category, delete · tap an empty slot to start one · drag ✥ to move · drag the bottom handle to resize · tap the circle to mark done ✓ / missed ✕';
   }
 
   function buildScheduleGrid() {
@@ -1555,19 +1568,64 @@
   if (wideMQ.addEventListener) wideMQ.addEventListener('change', onBreakpointChange);
   else if (wideMQ.addListener) wideMQ.addListener(onBreakpointChange);
 
-  function renderBlocks() {
-    Object.keys(dayCols).forEach(function (k) {
-      Array.prototype.slice.call(dayCols[k].querySelectorAll('.tblock')).forEach(function (n) { n.remove(); });
+  /* Blocks sharing a time used to be drawn one on top of the other, so all but
+     the last were invisible. Each run of mutually overlapping blocks is a
+     cluster, split into lanes side by side: a block takes the leftmost lane
+     that is free at its start, and every block in the cluster is sized to the
+     widest that cluster ever gets, so the lanes line up. */
+  function layoutLanes(blocks) {
+    var sorted = blocks.slice().sort(function (a, b) { return a.start - b.start || a.end - b.end; });
+    var out = [], cluster = [], laneEnds = [];
+    function closeCluster() {
+      cluster.forEach(function (s) { s.lanes = laneEnds.length; });
+      cluster = []; laneEnds = [];
+    }
+    sorted.forEach(function (b) {
+      // Nothing in the cluster is still running at this point, so it ends here.
+      if (laneEnds.length && laneEnds.every(function (end) { return b.start >= end; })) closeCluster();
+      var lane = 0;
+      while (lane < laneEnds.length && laneEnds[lane] > b.start) lane++;
+      laneEnds[lane] = b.end;
+      var slot = { b: b, lane: lane, lanes: 1 };
+      cluster.push(slot);
+      out.push(slot);
     });
-    data.blocks.forEach(function (b) { if (dayCols[b.day]) dayCols[b.day].appendChild(makeBlockEl(b)); });
+    closeCluster();
+    return out;
   }
 
-  function makeBlockEl(b) {
+  var TIGHT_W = 110; // below this, the grip and the time row stop earning their space
+  var SLIVER_W = 60; // below this, the status circle would squeeze the title out
+
+  function renderBlocks() {
+    Object.keys(dayCols).forEach(function (k) {
+      var col = dayCols[k];
+      Array.prototype.slice.call(col.querySelectorAll('.tblock')).forEach(function (n) { n.remove(); });
+      var colW = col.getBoundingClientRect().width;
+      var inDay = data.blocks.filter(function (b) { return b.day === k; });
+      layoutLanes(inDay).forEach(function (slot) {
+        var laneW = (colW - 6) / slot.lanes;
+        col.appendChild(makeBlockEl(slot.b, slot.lane, slot.lanes, laneW));
+      });
+    });
+  }
+
+  function makeBlockEl(b, lane, lanes, laneW) {
+    lanes = lanes || 1;
+    if (laneW == null) laneW = TIGHT_W;
     var h = (b.end - b.start) * PX_PER_MIN;
-    var div = el('div', 'tblock' + (b.status ? ' st-' + b.status : '') + (h < 44 ? ' compact' : ''));
+    var div = el('div', 'tblock' + (b.status ? ' st-' + b.status : '') + (h < 44 ? ' compact' : '')
+      + (laneW < TIGHT_W ? ' tight' : '') + (laneW < SLIVER_W ? ' sliver' : ''));
     div.style.top = ((b.start - dayStartMin) * PX_PER_MIN) + 'px';
     div.style.height = h + 'px';
     div.style.background = b.color;
+    if (lanes > 1) {
+      // Percentages of the column, keeping the 3px gutters a full-width block
+      // gets from the CSS, and a 2px gap between neighbours.
+      div.style.left = 'calc(3px + (100% - 6px) * ' + (lane / lanes) + ')';
+      div.style.right = 'auto';
+      div.style.width = 'calc((100% - 6px) / ' + lanes + ' - 2px)';
+    }
 
     var row = el('div', 'tb-row');
     var status = el('button', 'tb-status ' + b.status, statusMark(b.status));
@@ -1622,15 +1680,24 @@
     }
     return null;
   }
+  /* A day column is touch-action: pan-y on purpose, so a finger drag scrolls
+     the page. When the browser claims the gesture to pan, it fires
+     pointercancel and pointerup never comes — so listening only for pointerup
+     leaked the handlers, and the next tap anywhere ran the stale onUp. onUp is
+     told which way the gesture ended so it can undo rather than commit. */
   function drag(onMove, onUp) {
     function mv(e) { onMove(e); }
-    function up(e) {
+    function finish(e, cancelled) {
       document.removeEventListener('pointermove', mv);
       document.removeEventListener('pointerup', up);
-      onUp(e);
+      document.removeEventListener('pointercancel', cancel);
+      onUp(e, cancelled);
     }
+    function up(e) { finish(e, false); }
+    function cancel(e) { finish(e, true); }
     document.addEventListener('pointermove', mv);
     document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', cancel);
   }
 
   function attachCreateHandler(col, dayKey) {
@@ -1653,17 +1720,15 @@
         dragged = true;
         endMin = clamp(snap(colMinutes(col, e2.clientY)), startMin + SNAP, dayEndMin);
         paint();
-      }, function () {
+      }, function (e2, cancelled) {
         ghost.remove();
+        // The page panned instead: that was a scroll, not a slot being chosen.
+        if (cancelled) return;
         if (!dragged) endMin = clamp(startMin + 60, startMin + SNAP, dayEndMin);
-        var block = {
-          day: dayKey, start: startMin, end: endMin, text: '', status: '',
-          cat: cat.id, color: cat.color
-        };
-        data.blocks.push(block);
-        save(); renderBlocks(); renderDays(); renderProgress(); renderDayStrip();
-        var newEl = dayCols[dayKey].lastElementChild;
-        if (newEl) { var inp = newEl.querySelector('input'); if (inp) inp.focus(); }
+        // Nothing is written yet: touching an empty slot only proposes a block.
+        // It exists once it has been given a title, which is what tells a real
+        // one apart from a stray tap while scrolling.
+        openBlockEditor(null, { day: dayKey, start: startMin, end: endMin });
       });
     });
   }
@@ -1674,6 +1739,7 @@
     var grabOffset = colMinutes(dayCols[b.day], e.clientY) - b.start;
     var moved = false;
     var originY = e.clientY, originX = e.clientX;
+    var origin = { day: b.day, start: b.start, end: b.end };
     drag(function (e2) {
       // A few pixels of slop, so a slightly shaky tap still reads as a tap.
       if (!moved && Math.abs(e2.clientY - originY) < 4 && Math.abs(e2.clientX - originX) < 4) return;
@@ -1687,19 +1753,29 @@
       }
       div.style.top = ((b.start - dayStartMin) * PX_PER_MIN) + 'px';
       timeEl.textContent = fmtTime(b.start) + ' – ' + fmtTime(b.end);
-    }, function () {
+    }, function (e2, cancelled) {
+      // The page panned away under the finger, so nothing was meant by it:
+      // put the block back rather than leave it where the scroll dragged it.
+      if (cancelled) {
+        if (moved) { b.day = origin.day; b.start = origin.start; b.end = origin.end; renderBlocks(); }
+        return;
+      }
       // A drag repositions; a tap that never moved means "open this block".
-      if (moved) { save(); renderDays(); renderDayStrip(); }
+      if (moved) { save(); renderBlocks(); renderDays(); renderDayStrip(); }
       else if (!opts.silent) openBlockEditor(b);
     });
   }
 
   function startResize(e, b, div, timeEl) {
+    var originEnd = b.end;
     drag(function (e2) {
       b.end = clamp(snap(colMinutes(dayCols[b.day], e2.clientY)), b.start + SNAP, dayEndMin);
       div.style.height = ((b.end - b.start) * PX_PER_MIN) + 'px';
       timeEl.textContent = fmtTime(b.start) + ' – ' + fmtTime(b.end);
-    }, function () { save(); renderDays(); });
+    }, function (e2, cancelled) {
+      if (cancelled) { b.end = originEnd; renderBlocks(); return; }
+      save(); renderBlocks(); renderDays();
+    });
   }
 
   /* ================= Block editor =================
@@ -1744,7 +1820,7 @@
     });
   }
 
-  function openBlockEditor(b) {
+  function openBlockEditor(b, prefill) {
     editingBlock = b || null;
     document.getElementById('beTitle').textContent = b ? 'Edit block' : 'Add a block';
     document.getElementById('beDelete').style.display = b ? '' : 'none';
@@ -1768,13 +1844,18 @@
       beCat = b.cat || getCats()[0].id;
       beStatus = b.status || '';
     } else {
-      // Default to the next whole hour on the day being looked at.
+      // A slot that was touched hands over its day and times; the + button has
+      // none, so it falls back to the next whole hour on the day being looked at.
+      prefill = prefill || {};
       var now = new Date();
-      var startMin = clamp(snap((now.getHours() + 1) * 60), dayStartMin, 22 * 60);
+      var startMin = prefill.start != null
+        ? prefill.start
+        : clamp(snap((now.getHours() + 1) * 60), dayStartMin, 22 * 60);
+      var endMin = prefill.end != null ? prefill.end : startMin + 60;
       document.getElementById('beLabel').value = '';
-      daySel.value = isWide() ? (todayKeyInWeek() || 'mon') : selectedDay;
+      daySel.value = prefill.day || (isWide() ? (todayKeyInWeek() || 'mon') : selectedDay);
       document.getElementById('beStart').value = minToTimeValue(startMin);
-      document.getElementById('beEnd').value = minToTimeValue(startMin + 60);
+      document.getElementById('beEnd').value = minToTimeValue(endMin === 1440 ? 1439 : endMin);
       beCat = activeCat || getCats()[0].id;
       beStatus = '';
     }
@@ -1833,6 +1914,12 @@
 
   function saveBlockEditor() {
     var err = document.getElementById('beError');
+    var text = document.getElementById('beLabel').value.trim();
+    if (!text) {
+      err.style.display = ''; err.textContent = 'Please give the block a title.';
+      document.getElementById('beLabel').focus();
+      return;
+    }
     var start = timeValueToMin(document.getElementById('beStart').value);
     var end = timeValueToMin(document.getElementById('beEnd').value);
     if (start == null || end == null) {
@@ -1843,7 +1930,7 @@
     }
     var cat = catById(beCat);
     var props = {
-      text: document.getElementById('beLabel').value.trim(),
+      text: text,
       status: beStatus,
       cat: cat.id,
       color: cat.color
