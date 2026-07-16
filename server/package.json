@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node index.js",
     "hash": "node tools/hash-passphrase.js",
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.18.2",

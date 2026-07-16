@@ -369,6 +369,43 @@ test('settings changes are recorded too', { skip: !HAS_DB }, async () => {
   assert.deepEqual(down.settings.habits, ['Water']);
 });
 
+/* ---------------- boot diagnostics ----------------------------------------
+   A real Railway crash-loop logged "[boot] migration failed:" with nothing
+   after it, because the handler logged only e.message and the error was an
+   AggregateError, whose message is empty by design. These pin the fix. */
+
+test('describeError unpacks an AggregateError instead of printing nothing', { skip: !HAS_DB }, async () => {
+  const { describeError } = await import('../index.js');
+  // Exactly the shape Node produces when every address for a host is refused.
+  const sub1 = Object.assign(new Error('connect ECONNREFUSED ::1:5432'), { code: 'ECONNREFUSED' });
+  const sub2 = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED' });
+  const agg = new AggregateError([sub1, sub2]);
+
+  assert.equal(agg.message, '', 'precondition: AggregateError really does have an empty message');
+
+  const text = describeError(agg);
+  assert.ok(text.length > 0, 'must never render as an empty string');
+  assert.match(text, /ECONNREFUSED ::1:5432/);
+  assert.match(text, /ECONNREFUSED 10\.0\.0\.5:5432/);
+});
+
+test('describeError handles ordinary errors and junk', { skip: !HAS_DB }, async () => {
+  const { describeError } = await import('../index.js');
+  assert.match(describeError(Object.assign(new Error('nope'), { code: 'X' })), /nope.*code=X/);
+  assert.ok(describeError(null).length > 0);
+  assert.ok(describeError(new Error('')).length > 0, 'an empty Error must still say something');
+});
+
+test('dbTarget never leaks the database password', { skip: !HAS_DB }, async () => {
+  const { dbTarget } = await import('../index.js');
+  const out = dbTarget('postgresql://postgres:sup3rs3cret@postgres.railway.internal:5432/railway');
+  assert.equal(out, 'postgres.railway.internal:5432/railway');
+  assert.ok(!out.includes('sup3rs3cret'), 'the password must never reach a log');
+  assert.ok(!out.includes('postgres:'), 'nor the user');
+  // An unresolved Railway reference is a real mistake worth naming.
+  assert.match(dbTarget('${{Postgres.DATABASE_URL}}'), /not a valid URL/);
+});
+
 test('malformed JSON is a 400, not a 500', { skip: !HAS_DB }, async () => {
   const token = await login();
   const r = await fetch(base + '/sync', {
