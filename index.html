@@ -3059,12 +3059,39 @@
 
   function settingsDoc() {
     var at = Number(localStorage.getItem('wp-settings-updated'));
+    if (!validStamp(at)) {
+      /* Persist the substitution, exactly as the week path does a few lines
+         below. Substituting without writing meant the doc claimed UNKNOWN_AGE
+         while currentVersion('settings') read the missing key as 0 — so the two
+         never matched, and 'settings' could never leave the dirty queue. The
+         badge then counted an upload that had, in fact, already happened. */
+      at = UNKNOWN_AGE;
+      writeOrWarn('wp-settings-updated', String(at));
+    }
     return {
       habits: getHabits(),
       cats: getCats(),
       activeCat: activeCat,
-      updatedAt: validStamp(at) ? at : UNKNOWN_AGE
+      updatedAt: at
     };
+  }
+
+  /* Is there anything here that could be pushed for this ref at all?
+
+     Two paths in the send loop skip a ref silently: no week and no pending
+     delete (the other device's tombstone removed it while it was queued), and a
+     week whose JSON will not parse. A skipped ref never lands in sentVersion,
+     and the filter below keeps anything missing from sentVersion — so it stayed
+     queued for the life of the device, and "1 waiting to upload" was a lie
+     about an upload that could never happen.
+
+     Re-asked at filter time rather than remembered from send time, so a week
+     re-created mid-flight is kept queued rather than dropped. */
+  function canSend(ref) {
+    if (ref === 'settings') return true;
+    var raw = localStorage.getItem('wp-' + ref);
+    if (!raw) return validStamp(tombstones()[ref]);   // a pending delete is sendable
+    try { JSON.parse(raw); return true; } catch (e) { return false; }   // unreadable: never sendable
   }
 
   /* Merges rather than replaces. Replacing is what lost a habit: the incoming
@@ -3307,6 +3334,9 @@
       // device. If it changed mid-flight it stays queued; if it lost a conflict
       // the server's copy has already replaced it, so there is nothing to send.
       var stillDirty = SYNC.dirty().filter(function (ref) {
+        // Nothing here to push, and there never will be: keeping it queued only
+        // makes the badge lie about work that cannot happen. See canSend().
+        if (!canSend(ref)) return false;
         if (!(ref in sentVersion)) return true;                       // queued mid-flight
         return currentVersion(ref) !== sentVersion[ref];
       });
