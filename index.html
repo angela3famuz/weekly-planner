@@ -2089,6 +2089,16 @@
   document.getElementById('beStart').addEventListener('input', updateBeNote);
   document.getElementById('beEnd').addEventListener('input', updateBeNote);
 
+  // Nudge the end to 30 minutes past a freshly-picked start, so the common case
+  // needs one field, not two. Fires on change (a committed value), not every
+  // keystroke, and the end stays free to edit afterwards.
+  document.getElementById('beStart').addEventListener('change', function () {
+    var s = timeValueToMin(this.value);
+    if (s == null) return;
+    document.getElementById('beEnd').value = minToTimeValue(s + 30);
+    updateBeNote();
+  });
+
   // Writes a range to the right day(s), splitting at midnight and rolling into
   // next week when a Sunday night spills over. Mirrors the photo importer.
   function addBlockRange(dayKey, start, end, props) {
