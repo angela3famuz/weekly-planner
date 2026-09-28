@@ -1737,8 +1737,8 @@
   function renderSchedHint() {
     // Touch cannot drag-to-create: that gesture is reserved for scrolling the page.
     document.getElementById('schedHint').textContent = isWide()
-      ? 'Click a block to edit it · click or drag an empty slot to start one · drag to move · drag the bottom handle to resize · click the circle to mark done ✓ / missed ✕'
-      : 'Tap a block to edit it — label, day, times, category, delete · tap an empty slot to start one · drag ✥ to move · drag the bottom handle to resize · tap the circle to mark done ✓ / missed ✕';
+      ? 'Click a slot to add · click a block to edit · drag to move or resize · circle marks done ✓ / missed ✕'
+      : 'Tap a slot to add · tap a block to edit · circle marks done ✓ / missed ✕';
   }
 
   function buildScheduleGrid() {
