@@ -275,7 +275,9 @@
   /* =========================================================
      Day cards
      ========================================================= */
-  .days { display: grid; grid-template-columns: 1fr; gap: var(--s2); }
+  /* Two days per row even on a phone, so a week is ~4 compact rows rather than
+     eight tall full-width cards to scroll past. */
+  .days { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--s2); }
   .day-card .card-head span.date { font-weight: 600; text-transform: none; letter-spacing: 0; }
   .day-card.today-card { box-shadow: 0 0 0 2.5px var(--ink), var(--sh-2); }
   .day-card .card-body { min-height: 0; padding: var(--s1) var(--s3) var(--s2); }
