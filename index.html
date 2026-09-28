@@ -739,8 +739,8 @@
         <button class="tab-btn" id="tabSchedule" role="tab">Schedule</button>
       </div>
       <div class="topbar-actions">
-        <button class="icon-btn" id="importBtn" aria-label="Import shifts from a photo">
-          &#128247;<span class="icon-label">Import shifts</span>
+        <button class="icon-btn" id="importBtn" aria-label="Import meetings from a photo">
+          &#128247;<span class="icon-label">Import meetings</span>
         </button>
         <button class="icon-btn plain" id="backupBtn" aria-label="Backup, restore and sync">
           &#8943;<span class="sync-badge" id="syncBadge" style="display:none"></span>
@@ -836,11 +836,11 @@
 <!-- Import modal -->
 <div class="overlay" id="importOverlay">
   <div class="modal">
-    <h2>&#128247; Import shifts from a photo</h2>
+    <h2>&#128247; Import meetings from a photo</h2>
 
     <ol class="steps">
       <li>
-        <span class="step-text">Copy the prompt, then send it to Claude with a photo of your schedule.</span>
+        <span class="step-text">Copy the prompt, then send it to Claude with a photo of your calendar. Scroll so the whole day is in frame — only what's visible in the photo can be read.</span>
         <button class="btn step-btn" id="copyPromptBtn">Copy prompt for Claude</button>
       </li>
       <li>
@@ -850,7 +850,7 @@
       </li>
       <li>
         <span class="step-text">Check what landed, then add it.</span>
-        <label class="cat-row">Add these shifts as
+        <label class="cat-row">Add these meetings as
           <select id="importCat"></select>
         </label>
       </li>
@@ -874,7 +874,7 @@
 
     <label class="fld">
       <span class="fld-label">What is it?</span>
-      <input type="text" id="beLabel" maxlength="60" placeholder="e.g. Cafe shift">
+      <input type="text" id="beLabel" maxlength="60" placeholder="e.g. Design review">
     </label>
 
     <label class="fld">
@@ -2267,8 +2267,8 @@
         shifts: []
       };
     }
-    var arr = Array.isArray(obj) ? obj : obj.shifts;
-    if (!Array.isArray(arr) || !arr.length) return { errors: ['No shifts found in the code.'], shifts: [] };
+    var arr = Array.isArray(obj) ? obj : (obj.meetings || obj.events || obj.shifts);
+    if (!Array.isArray(arr) || !arr.length) return { errors: ['No meetings found in the code.'], shifts: [] };
 
     function addShift(dateObj, start, end, label, overnight) {
       shifts.push({
@@ -2283,7 +2283,7 @@
     }
 
     arr.forEach(function (s, i) {
-      var n = 'Shift ' + (i + 1);
+      var n = 'Meeting ' + (i + 1);
       var dm = String(s.date || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
       if (!dm) { errors.push(n + ': bad or missing date (need YYYY-MM-DD).'); return; }
       var dateObj = new Date(+dm[1], +dm[2] - 1, +dm[3]);
@@ -2293,7 +2293,7 @@
       var start = parseTimeStr(s.start), end = parseTimeStr(s.end);
       if (start == null || end == null) { errors.push(n + ': bad start/end time.'); return; }
       if (start === end) { errors.push(n + ': starts and ends at the same time.'); return; }
-      var label = String(s.label || s.title || 'Work').slice(0, 60);
+      var label = String(s.title || s.label || 'Meeting').slice(0, 60);
 
       if (end > start) { addShift(dateObj, start, end, label, false); return; }
 
@@ -2354,7 +2354,7 @@
     var n = importParsed ? importParsed.filter(function (s) { return s.checked; }).length : 0;
     var btn = document.getElementById('importAddBtn');
     btn.disabled = n === 0;
-    btn.textContent = n ? 'Add ' + n + ' shift' + (n > 1 ? 's' : '') : 'Add selected';
+    btn.textContent = n ? 'Add ' + n + ' meeting' + (n > 1 ? 's' : '') : 'Add selected';
   }
 
   function doImport() {
@@ -2378,7 +2378,7 @@
     var ok = document.getElementById('importSuccess');
     ok.style.display = '';
     var weeks = Object.keys(byWeek).length;
-    ok.textContent = '✓ Added ' + selected.length + ' shift' + (selected.length > 1 ? 's' : '') +
+    ok.textContent = '✓ Added ' + selected.length + ' meeting' + (selected.length > 1 ? 's' : '') +
       (weeks > 1 ? ' across ' + weeks + ' weeks' : '') + '. Use the week arrows to see other weeks.';
     importParsed = null;
     document.getElementById('importPreview').innerHTML = '';
@@ -2391,18 +2391,29 @@
   function buildPrompt() {
     var today = new Date();
     var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    var wkEnd = new Date(weekStart); wkEnd.setDate(wkEnd.getDate() + 6);
+    var weekLine = "I'm filling in the week of Monday " + fmt(weekStart) + ' to Sunday ' + fmt(wkEnd) +
+      ' (' + iso(weekStart) + ' to ' + iso(wkEnd) + '), so map each day onto a real date in that week. ' +
+      'If the photo shows its own explicit dates, trust those instead.';
     return [
-      "Here's a photo of my work schedule. Read the shifts off it and reply with ONLY a JSON code block in exactly this shape — no explanation, no extra text:",
+      "Here's a photo of my calendar. Every meeting on it is mine — I want each meeting captured as its own separate time block.",
       '',
-      '{"shifts":[{"date":"YYYY-MM-DD","start":"9:00","end":"17:30","label":"Work"}]}',
+      'Read it carefully, then reply with a JSON code block in exactly this shape — one entry per meeting:',
+      '',
+      '{"meetings":[{"date":"YYYY-MM-DD","start":"9:00","end":"9:30","title":"Team standup"}]}',
+      '',
+      'How to read the calendar accurately — this is the part that usually goes wrong:',
+      '1. First work out the layout: is it a week view (days across the columns, times down the side) or a single day? Find the strip with the weekday names/dates and the column of times.',
+      '2. Then take one day at a time and read every meeting in it from top (earliest) to bottom (latest). Capture each block separately — back-to-back meetings are separate entries even when they touch, so do not merge them, and do not skip the short ones.',
+      '3. For each meeting, read its title and line its top and bottom edges up against the time axis to get the exact start and end. Think it through in words first if that helps; put the final answer in a single ```json code block at the end — I only read that block.',
       '',
       'Rules:',
-      '- "date" must be YYYY-MM-DD.',
-      '- "start"/"end" can be 24-hour ("17:30") or 12-hour ("5:30pm").',
-      '- If a shift runs past midnight, give the real end time (e.g. "02:00"). Do not split it yourself.',
-      '- "label" is a short name for the shift, e.g. the role or venue.',
-      '- Include every shift you can see, and only mine.',
-      '- Today is ' + iso(today) + ' (a ' + dayNames[today.getDay()] + '). Use that to turn any weekday names or partial dates into real dates.'
+      '- "date" must be YYYY-MM-DD. ' + weekLine,
+      '- "start"/"end" can be 24-hour ("13:30") or 12-hour ("1:30pm"). The calendar may not print a time on each block — read it from where the block sits against the time axis, estimating to the nearest 15 minutes.',
+      '- "title" is the meeting\'s name as written on the calendar, e.g. "1:1 with Sam" or "Design review". Keep it short but recognisable.',
+      '- Include every timed meeting, even 15-minute ones. Skip all-day banners and anything with no time on it.',
+      '- If a meeting somehow runs past midnight, give the real end time (e.g. "02:00"); do not split it yourself.',
+      '- Today is ' + iso(today) + ' (a ' + dayNames[today.getDay()] + ').'
     ].join('\n');
   }
 
@@ -2493,7 +2504,7 @@
     var overnights = result.shifts.filter(function (s) { return s.overnight; }).length;
     if (overnights) {
       noteEl.style.display = '';
-      noteEl.textContent = 'A shift runs past midnight, so it is split into two blocks — one either side of 12am.';
+      noteEl.textContent = 'A meeting runs past midnight, so it is split into two blocks — one either side of 12am.';
     } else {
       noteEl.style.display = 'none';
     }
