@@ -228,14 +228,15 @@
   .cbox.done { background: var(--green-bg); border-color: var(--green-bg); color: #fff; }
   .cbox.missed { background: var(--red-bg); border-color: var(--red-bg); color: #fff; }
 
-  .check-item input[type="text"], .task-input {
+  .check-item textarea, .task-input {
     flex: 1; border: none; background: transparent; outline: none; min-width: 0;
     font-size: 15px; padding: var(--s2) 0;
+    font-family: inherit; line-height: 1.4; resize: none; overflow: hidden;
   }
-  .st-done > input[type="text"], .st-done .task-input {
+  .st-done > textarea, .st-done .task-input {
     text-decoration: line-through; text-decoration-color: var(--green); text-decoration-thickness: 2px; opacity: .55;
   }
-  .st-missed > input[type="text"], .st-missed .task-input {
+  .st-missed > textarea, .st-missed .task-input {
     text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 2px; opacity: .5;
   }
 
@@ -711,7 +712,7 @@
     .grid { grid-template-columns: 300px 1fr; gap: var(--s4); }
     .days { grid-template-columns: repeat(4, 1fr); }
     .check-item, .day-task { min-height: 0; }
-    .check-item input[type="text"], .task-input { font-size: 14px; padding: var(--s1) 0; }
+    .check-item textarea, .task-input { font-size: 14px; padding: var(--s1) 0; }
     .day-task { font-size: 14px; }
   }
 
@@ -1399,9 +1400,13 @@
       box.title = 'Click: done ✓ · again: missed ✕ · again: clear';
       box.onclick = function () { cycleStatus(item); save(); render(); };
       row.appendChild(box);
-      var inp = document.createElement('input');
-      inp.type = 'text'; inp.value = item.text;
-      inp.oninput = function () { item.text = inp.value; save(); };
+      // A textarea, not an input, so a long priority/to-do wraps to a second
+      // line instead of clipping mid-word behind the delete button.
+      var inp = document.createElement('textarea');
+      inp.className = 'check-input'; inp.rows = 1; inp.value = item.text;
+      inp.oninput = function () { item.text = inp.value; autoGrow(inp); save(); };
+      // Enter commits the row rather than opening a new line — matches the old input.
+      inp.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
       row.appendChild(inp);
       if (item.carried) {
         var mark = el('span', 'carried', '↩');
@@ -1414,6 +1419,14 @@
       row.appendChild(del);
       container.appendChild(row);
     });
+    // Size each field to its content now that the rows are laid out in the DOM.
+    container.querySelectorAll('textarea').forEach(autoGrow);
+  }
+
+  // Grow a textarea to fit its text (used for wrapping priority/to-do rows).
+  function autoGrow(t) {
+    t.style.height = 'auto';
+    t.style.height = t.scrollHeight + 'px';
   }
 
   function renderDays() {
@@ -3572,9 +3585,17 @@
     document.getElementById('tabSchedule').classList.toggle('active', !planner);
     localStorage.setItem('wp-tab', name);
     if (!planner) buildScheduleGrid();
+    // Checklist fields sized to 0 while the planner was hidden need re-growing
+    // once it is on screen and the rows finally have a laid-out height.
+    else document.querySelectorAll('.check-input').forEach(autoGrow);
   }
   document.getElementById('tabPlanner').onclick = function () { setTab('planner'); };
   document.getElementById('tabSchedule').onclick = function () { setTab('schedule'); };
+
+  // A width change rewraps the checklist text, so their heights must be recomputed.
+  window.addEventListener('resize', function () {
+    document.querySelectorAll('.check-input').forEach(autoGrow);
+  });
 
   // Shadow under the top bar only once content has scrolled beneath it.
   var topbar = document.getElementById('topbar');
