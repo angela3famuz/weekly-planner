@@ -184,7 +184,7 @@
   /* =========================================================
      Cards
      ========================================================= */
-  .grid { display: grid; grid-template-columns: 1fr; gap: var(--s3); }
+  .grid { display: grid; grid-template-columns: 1fr; gap: var(--s2); }
   .card {
     background: var(--card); border-radius: var(--r-md);
     box-shadow: var(--sh-1); overflow: hidden;
@@ -194,14 +194,15 @@
     text-transform: uppercase; display: flex; justify-content: space-between; align-items: center;
   }
   .card-body { padding: var(--s2) var(--s3) var(--s3); }
-  .sidebar { display: flex; flex-direction: column; gap: var(--s3); }
+  .sidebar { display: flex; flex-direction: column; gap: var(--s2); }
 
   textarea {
     width: 100%; border: none; resize: vertical; background: transparent;
     outline: none; line-height: 1.55; font-size: 15px;
   }
   .focus-body { background: var(--pink-soft); }
-  .focus-body textarea { min-height: 66px; }
+  /* Grows to fit what's written rather than reserving a fixed tall block. */
+  .focus-body textarea { min-height: 44px; resize: none; overflow: hidden; }
   ::placeholder { color: var(--ink-3); opacity: 1; }
 
   /* =========================================================
@@ -280,7 +281,7 @@
   .days { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--s2); }
   .day-card .card-head span.date { font-weight: 600; text-transform: none; letter-spacing: 0; }
   .day-card.today-card { box-shadow: 0 0 0 2.5px var(--ink), var(--sh-2); }
-  .day-card .card-body { min-height: 0; padding: var(--s1) var(--s3) var(--s2); }
+  .day-card .card-body { min-height: 0; padding: var(--s1) var(--s2) var(--s2); }
   .today-pill {
     background: var(--ink); color: var(--card); border-radius: 999px;
     font-size: 9px; letter-spacing: .8px; padding: 2px 7px; margin-left: var(--s2);
@@ -308,7 +309,7 @@
   /* =========================================================
      Habits
      ========================================================= */
-  .bottom { display: grid; grid-template-columns: 1fr; gap: var(--s3); margin-top: var(--s3); }
+  .bottom { display: grid; grid-template-columns: 1fr; gap: var(--s2); margin-top: var(--s2); }
   table.habits { width: 100%; border-collapse: collapse; table-layout: fixed; }
   table.habits th {
     font-size: 11px; font-weight: 800; padding: var(--s1) 0; text-align: center; color: var(--ink-2);
@@ -3513,7 +3514,8 @@
   function render() {
     var end = new Date(weekStart); end.setDate(end.getDate() + 6);
     document.getElementById('weekLabel').textContent = 'Week of ' + fmt(weekStart) + ' – ' + fmt(end);
-    document.getElementById('focus').value = data.focus || '';
+    var focusEl = document.getElementById('focus');
+    focusEl.value = data.focus || ''; autoGrow(focusEl);
     document.getElementById('notes').value = data.notes || '';
     renderChecklist(document.getElementById('priorities'), data.priorities, { star: true });
     renderChecklist(document.getElementById('todos'), data.todos, { star: false });
@@ -3523,7 +3525,7 @@
     buildScheduleGrid();
   }
 
-  document.getElementById('focus').addEventListener('input', function (e) { data.focus = e.target.value; save(); });
+  document.getElementById('focus').addEventListener('input', function (e) { data.focus = e.target.value; autoGrow(e.target); save(); });
   document.getElementById('notes').addEventListener('input', function (e) { data.notes = e.target.value; save(); });
 
   /* Enter alone is not enough on a phone, where the return key is easy to miss
@@ -3595,14 +3597,14 @@
     if (!planner) buildScheduleGrid();
     // Checklist and task fields sized to 0 while the planner was hidden need
     // re-growing once it is on screen and the rows have a laid-out height.
-    else document.querySelectorAll('.check-input, .task-input').forEach(autoGrow);
+    else document.querySelectorAll('.check-input, .task-input, #focus').forEach(autoGrow);
   }
   document.getElementById('tabPlanner').onclick = function () { setTab('planner'); };
   document.getElementById('tabSchedule').onclick = function () { setTab('schedule'); };
 
-  // A width change rewraps the checklist and task text, so heights must be recomputed.
+  // A width change rewraps the checklist, task and focus text, so heights must be recomputed.
   window.addEventListener('resize', function () {
-    document.querySelectorAll('.check-input, .task-input').forEach(autoGrow);
+    document.querySelectorAll('.check-input, .task-input, #focus').forEach(autoGrow);
   });
 
   // Shadow under the top bar only once content has scrolled beneath it.
