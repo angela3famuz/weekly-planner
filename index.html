@@ -228,15 +228,15 @@
   .cbox.done { background: var(--green-bg); border-color: var(--green-bg); color: #fff; }
   .cbox.missed { background: var(--red-bg); border-color: var(--red-bg); color: #fff; }
 
-  .check-item textarea, .task-input {
+  .check-item textarea, .task-input, .block-label {
     flex: 1; border: none; background: transparent; outline: none; min-width: 0;
     font-size: 15px; padding: var(--s2) 0;
     font-family: inherit; line-height: 1.4; resize: none; overflow: hidden;
   }
-  .st-done > textarea, .st-done .task-input {
+  .st-done > textarea, .st-done .task-input, .st-done .block-label {
     text-decoration: line-through; text-decoration-color: var(--green); text-decoration-thickness: 2px; opacity: .55;
   }
-  .st-missed > textarea, .st-missed .task-input {
+  .st-missed > textarea, .st-missed .task-input, .st-missed .block-label {
     text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 2px; opacity: .5;
   }
 
@@ -714,7 +714,7 @@
     .grid { grid-template-columns: 300px 1fr; gap: var(--s4); }
     .days { grid-template-columns: repeat(4, 1fr); }
     .check-item, .day-task { min-height: 0; }
-    .check-item textarea, .task-input { font-size: 14px; padding: var(--s1) 0; }
+    .check-item textarea, .task-input, .block-label { font-size: 14px; padding: var(--s1) 0; }
     .day-task { font-size: 14px; }
   }
 
@@ -1471,8 +1471,11 @@
             chip.title = 'Edit this block';
             chip.onclick = function () { openBlockEditor(b); };
             row.appendChild(chip);
+            // A single-line input, not a wrapping textarea: the row already
+            // carries a time chip, so in a narrow day column there isn't width
+            // to wrap a long label into — the time chip (tap to edit) leads here.
             var inp = document.createElement('input');
-            inp.className = 'task-input'; inp.type = 'text'; inp.value = b.text || '';
+            inp.className = 'block-label'; inp.type = 'text'; inp.value = b.text || '';
             inp.placeholder = 'label...';
             inp.oninput = function () { b.text = inp.value; save(); };
             inp.onchange = function () { buildScheduleGrid(); };
@@ -1496,9 +1499,10 @@
         box.title = 'Click: done ✓ · again: missed ✕ · again: clear';
         box.onclick = function () { cycleStatus(t); save(); render(); };
         row.appendChild(box);
-        var inp = document.createElement('input');
-        inp.className = 'task-input'; inp.type = 'text'; inp.value = t.text;
-        inp.oninput = function () { t.text = inp.value; save(); };
+        var inp = document.createElement('textarea');
+        inp.className = 'task-input'; inp.rows = 1; inp.value = t.text;
+        inp.oninput = function () { t.text = inp.value; autoGrow(inp); save(); };
+        inp.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
         row.appendChild(inp);
         var del = el('button', 'del-btn', '✕');
         del.onclick = function () { tasks.splice(i, 1); save(); render(); };
@@ -1517,6 +1521,8 @@
       card.appendChild(body);
       wrap.appendChild(card);
     });
+    // Size the task fields now that the cards are laid out in the DOM.
+    wrap.querySelectorAll('.task-input').forEach(autoGrow);
   }
 
   function renderHabits() {
@@ -3587,16 +3593,16 @@
     document.getElementById('tabSchedule').classList.toggle('active', !planner);
     localStorage.setItem('wp-tab', name);
     if (!planner) buildScheduleGrid();
-    // Checklist fields sized to 0 while the planner was hidden need re-growing
-    // once it is on screen and the rows finally have a laid-out height.
-    else document.querySelectorAll('.check-input').forEach(autoGrow);
+    // Checklist and task fields sized to 0 while the planner was hidden need
+    // re-growing once it is on screen and the rows have a laid-out height.
+    else document.querySelectorAll('.check-input, .task-input').forEach(autoGrow);
   }
   document.getElementById('tabPlanner').onclick = function () { setTab('planner'); };
   document.getElementById('tabSchedule').onclick = function () { setTab('schedule'); };
 
-  // A width change rewraps the checklist text, so their heights must be recomputed.
+  // A width change rewraps the checklist and task text, so heights must be recomputed.
   window.addEventListener('resize', function () {
-    document.querySelectorAll('.check-input').forEach(autoGrow);
+    document.querySelectorAll('.check-input, .task-input').forEach(autoGrow);
   });
 
   // Shadow under the top bar only once content has scrolled beneath it.
