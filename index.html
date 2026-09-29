@@ -483,6 +483,13 @@
     border: none; background: transparent; font-size: 14px; font-weight: 700;
     width: 66px; outline: none; cursor: pointer;
   }
+  .cat-add {
+    display: flex; align-items: center; gap: var(--s2); min-height: 38px;
+    border: 2px dashed #cfc8ba; border-radius: var(--r-sm);
+    padding: var(--s1) var(--s3); background: transparent;
+    font-size: 13px; font-weight: 700; color: var(--ink-2); cursor: pointer;
+  }
+  .cat-add:active { border-color: var(--teal); color: var(--ink); }
   .legend-hint { font-size: 11px; color: var(--ink-3); width: 100%; }
 
   /* =========================================================
@@ -1039,6 +1046,28 @@
     return c[0];
   }
   var activeCat = localStorage.getItem('wp-active-cat') || 'personal';
+
+  // Colours new categories draw from — the three defaults first, then more
+  // pastels. A new category takes the first colour not already in use.
+  var CAT_PALETTE = [
+    '#b3ddd1', '#cdb9ea', '#f6bd7d', '#f4a9b8', '#d9e08a',
+    '#eddd6e', '#9ec7e8', '#f2b8c6', '#c2b2a0', '#a9dcc3'
+  ];
+  function addCategory() {
+    var cats = getCats();
+    var used = {}; cats.forEach(function (c) { used[String(c.color).toLowerCase()] = 1; });
+    var color = CAT_PALETTE.filter(function (h) { return !used[h.toLowerCase()]; })[0]
+      || CAT_PALETTE[cats.length % CAT_PALETTE.length];
+    var id = 'c' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+    cats.push({ id: id, name: 'New category', color: color, updatedAt: Date.now() });
+    if (!saveCats(cats)) return;
+    activeCat = id; localStorage.setItem('wp-active-cat', activeCat);
+    renderLegend(); renderImportCat(); renderBeCats();
+    // Drop the cursor straight into the new name so it can be typed over.
+    var inputs = document.getElementById('catLegend').querySelectorAll('.cat-chip input');
+    var last = inputs[inputs.length - 1];
+    if (last) { last.focus(); last.select(); }
+  }
 
   var PX_PER_MIN = 0.8, SNAP = 30;
   var DEFAULT_START = 480, DEFAULT_END = 1200; // 8am - 8pm
@@ -1653,8 +1682,8 @@
       inp.title = 'Click to select · type to rename';
       // Same per-item age as habits: a rename must beat a stale copy of the
       // list rather than be undone by whichever device pushes its whole
-      // document last. Categories cannot be added or deleted, so they need a
-      // stamp but no tombstone.
+      // document last. Adds union across devices by id (mergeById), so a stamp
+      // is enough — only deletion would need a tombstone, and there is none.
       inp.oninput = function () {
         c.name = inp.value;
         c.updatedAt = Date.now();
@@ -1669,6 +1698,10 @@
       });
       wrap.appendChild(chip);
     });
+    var add = el('button', 'cat-add', '+ Add category');
+    add.title = 'Add a new category';
+    add.onclick = addCategory;
+    wrap.appendChild(add);
     wrap.appendChild(el('span', 'legend-hint', 'selected category colors new blocks · type on a name to rename'));
   }
 

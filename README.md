@@ -69,6 +69,10 @@ plain drag scrolls the page), drag the bottom handle to resize, tap the circle t
 done ✓ / missed ✕ / clear. Blocks under ~55 minutes are too short to host a grip or
 handle without swallowing the block, so use the editor for those.
 
+The **Categories** row colours your blocks. Start with three (rename any by typing over it),
+and **+ Add category** makes more, each with its own colour. The selected category is the
+one new blocks take.
+
 ## Importing your calendar
 
 The **Import** button (the camera in the top bar) reads a week of meetings into the
