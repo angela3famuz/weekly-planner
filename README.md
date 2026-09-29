@@ -69,20 +69,41 @@ plain drag scrolls the page), drag the bottom handle to resize, tap the circle t
 done ✓ / missed ✕ / clear. Blocks under ~55 minutes are too short to host a grip or
 handle without swallowing the block, so use the editor for those.
 
-## Importing shifts from a photo
+## Importing your calendar
 
-The planner never sees your photo. **Import shifts** walks you through a round trip:
+The **Import** button (the camera in the top bar) reads a week of meetings into the
+schedule. Everything happens on your device — nothing is uploaded. Two ways in:
 
-1. *Copy prompt for Claude* — puts a ready-made prompt on your clipboard, including
-   the expected JSON shape and today's date (so weekday names resolve to real dates).
-2. Send that to Claude along with a photo of your schedule.
-3. Paste the reply back. Code fences, surrounding chat, curly quotes and trailing
-   commas are all tolerated — paste the whole reply if you like.
-4. Tick the shifts you want and add them.
+### From a calendar file (.ics)
 
-Shifts running past midnight are split into two blocks, one either side of 12am, and
-flagged `OVERNIGHT` in the preview. Shifts already on your schedule are marked
-*already added* and unticked by default.
+The direct route, and the accurate one. In **desktop Outlook**: *File → Save Calendar*,
+set the range to **this week** with **Full details**, and save the `.ics`. Load that file
+in the modal. The planner parses it in the browser:
+
+- **Recurring meetings are expanded** into their real instances for the week you're
+  viewing (daily, weekly-by-weekday, monthly), honouring `EXDATE` exclusions and
+  `UNTIL`/`COUNT` limits.
+- **All-day banners** (holidays, "out of office" bars) are skipped — only timed meetings
+  come through.
+- Times are read as written; anything stamped UTC is converted to your local time.
+
+It's an ordinary `.ics` file, so exports from Google Calendar, Apple Calendar, or any
+other calendar work too — move to the week you want here first, since only that week is read.
+
+### From a photo (via Claude)
+
+Tucked under *Or import from a photo instead*, for when you only have a screenshot. The
+planner never sees your photo:
+
+1. *Copy prompt for Claude* — puts a ready-made prompt on your clipboard, including the
+   expected JSON shape, the week you're filling in, and a grid-reading procedure.
+2. Send that to Claude with a photo of your calendar.
+3. Paste the reply back. Code fences, surrounding chat, curly quotes and trailing commas
+   are all tolerated.
+
+Either way: meetings running past midnight are split into two blocks either side of 12am
+and flagged `OVERNIGHT`, and meetings already on your schedule are marked *already added*
+and unticked by default. Tick what you want and add it.
 
 ## Sync across devices
 

@@ -531,6 +531,8 @@
     font-size: 13px; color: var(--ink-2); margin-top: var(--s2);
     background: var(--yellow-soft); border-radius: var(--r-sm); padding: var(--s2) var(--s3); line-height: 1.5;
   }
+  .import-hint { font-size: 12px; color: var(--ink-3); margin: var(--s1) 0 0; line-height: 1.5; }
+  .import-hint b { color: var(--ink-2); font-weight: 700; }
   /* Block editor fields */
   .fld { display: block; margin-bottom: var(--s3); }
   .fld-label {
@@ -840,25 +842,32 @@
 <!-- Import modal -->
 <div class="overlay" id="importOverlay">
   <div class="modal">
-    <h2>&#128247; Import meetings from a photo</h2>
+    <h2>&#128197; Import your calendar</h2>
 
-    <ol class="steps">
-      <li>
-        <span class="step-text">Copy the prompt, then send it to Claude with a photo of your calendar. Scroll so the whole day is in frame — only what's visible in the photo can be read.</span>
-        <button class="btn step-btn" id="copyPromptBtn">Copy prompt for Claude</button>
-      </li>
-      <li>
-        <span class="step-text">Paste Claude's reply here — a code block is fine.</span>
-        <button class="btn step-btn" id="pasteBtn">Paste</button>
-        <textarea id="importCode" placeholder='Paste Claude&apos;s reply…'></textarea>
-      </li>
-      <li>
-        <span class="step-text">Check what landed, then add it.</span>
-        <label class="cat-row">Add these meetings as
-          <select id="importCat"></select>
-        </label>
-      </li>
-    </ol>
+    <label class="fld">
+      <span class="fld-label">Load a calendar file (.ics)</span>
+      <input type="file" id="icsFile" accept=".ics,text/calendar">
+    </label>
+    <p class="import-hint">Desktop Outlook: <b>File &rarr; Save Calendar</b>, set the range to <b>this week</b> with <b>Full details</b>, save the <b>.ics</b>, then load it here. It is read on your device — nothing is uploaded.</p>
+
+    <label class="cat-row" style="margin: var(--s3) 0;">Add these as
+      <select id="importCat"></select>
+    </label>
+
+    <details class="paste-fallback">
+      <summary>Or import from a photo instead</summary>
+      <ol class="steps">
+        <li>
+          <span class="step-text">Copy the prompt, then send it to Claude with a photo of your calendar. Scroll so the whole day is in frame.</span>
+          <button class="btn step-btn" id="copyPromptBtn">Copy prompt for Claude</button>
+        </li>
+        <li>
+          <span class="step-text">Paste Claude's reply here — a code block is fine.</span>
+          <button class="btn step-btn" id="pasteBtn">Paste</button>
+          <textarea id="importCode" placeholder='Paste Claude&apos;s reply…'></textarea>
+        </li>
+      </ol>
+    </details>
 
     <div class="import-error" id="importError" style="display:none"></div>
     <div class="import-note" id="importNote" style="display:none"></div>
@@ -2556,6 +2565,165 @@
   document.getElementById('importCancel').onclick = function () { overlay.classList.remove('open'); };
   overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.classList.remove('open'); });
   document.getElementById('importAddBtn').onclick = doImport;
+
+  /* ---- Calendar file (.ics) import --------------------------------------
+     Reads an iCalendar file (e.g. desktop Outlook: File > Save Calendar)
+     entirely on the device and turns the events in the viewed week into the
+     same meeting shape the photo import produces, so the preview / dedup /
+     category / Add button below are all shared. */
+
+  function unfoldICS(text) {
+    return String(text == null ? '' : text)
+      .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+      .replace(/\n[ \t]/g, '');            // RFC 5545 line folding
+  }
+  function icsUnescape(s) {
+    return String(s || '')
+      .replace(/\\n/gi, ' ').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\')
+      .trim();
+  }
+  function icsHHMM(min) {
+    min = ((min % 1440) + 1440) % 1440;
+    return String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
+  }
+  // ICS date/time -> {y,m,d,hh,mm,allDay}. Wall-clock components are used as
+  // written (the calendar is the user's own, in their own zone); a trailing Z
+  // is converted from UTC to local so those events still land on the right time.
+  function icsWhen(params, value) {
+    value = String(value || '').trim();
+    if (/VALUE=DATE(?![-A-Z])/i.test(params || '') || /^\d{8}$/.test(value)) {
+      var d = value.match(/^(\d{4})(\d{2})(\d{2})/);
+      return d ? { y: +d[1], m: +d[2], d: +d[3], hh: 0, mm: 0, allDay: true } : null;
+    }
+    var m = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?/);
+    if (!m) return null;
+    if (m[7] === 'Z') {
+      var u = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+      return { y: u.getFullYear(), m: u.getMonth() + 1, d: u.getDate(), hh: u.getHours(), mm: u.getMinutes(), allDay: false };
+    }
+    return { y: +m[1], m: +m[2], d: +m[3], hh: +m[4], mm: +m[5], allDay: false };
+  }
+  function icsDurationMin(d) {
+    var m = String(d || '').match(/P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?/i);
+    if (!m) return 0;
+    return (+(m[1] || 0)) * 10080 + (+(m[2] || 0)) * 1440 + (+(m[3] || 0)) * 60 + (+(m[4] || 0));
+  }
+  function parseICS(text) {
+    var lines = unfoldICS(text).split('\n');
+    var events = [], cur = null;
+    lines.forEach(function (line) {
+      if (/^BEGIN:VEVENT/i.test(line)) { cur = { exdate: [] }; return; }
+      if (/^END:VEVENT/i.test(line)) { if (cur) events.push(cur); cur = null; return; }
+      if (!cur) return;
+      var i = line.indexOf(':'); if (i < 0) return;
+      var name = line.slice(0, i), val = line.slice(i + 1), key = name.split(';')[0].toUpperCase();
+      if (key === 'DTSTART') { cur.startP = name; cur.start = val; }
+      else if (key === 'DTEND') { cur.endP = name; cur.end = val; }
+      else if (key === 'SUMMARY') cur.summary = val;
+      else if (key === 'RRULE') cur.rrule = val;
+      else if (key === 'DURATION') cur.duration = val;
+      else if (key === 'EXDATE') cur.exdate.push(val);
+    });
+    return events;
+  }
+  function dateOnly(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function mondayMs(d) { var x = dateOnly(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.getTime(); }
+
+  // Dates in [ws, weekEnd) on which an RRULE event occurs. Enumerates from the
+  // event's start so COUNT is honoured, capped so a runaway rule can't hang.
+  function expandRRULE(rrule, start, ws, weekEnd, exdates) {
+    var p = {};
+    String(rrule).split(';').forEach(function (kv) { var i = kv.indexOf('='); if (i > 0) p[kv.slice(0, i).toUpperCase()] = kv.slice(i + 1).toUpperCase(); });
+    var freq = p.FREQ, interval = Math.max(1, parseInt(p.INTERVAL || '1', 10) || 1);
+    var count = p.COUNT ? parseInt(p.COUNT, 10) : Infinity;
+    var untilD = null; if (p.UNTIL) { var w = icsWhen('', p.UNTIL); if (w) untilD = new Date(w.y, w.m - 1, w.d, 23, 59); }
+    var DOW = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+    var byday = p.BYDAY ? p.BYDAY.split(',').map(function (s) { return DOW[s.slice(-2)]; }).filter(function (n) { return n != null; }) : null;
+    var ex = {}; (exdates || []).forEach(function (v) { String(v).split(',').forEach(function (o) { var w = icsWhen('', o.trim()); if (w) ex[w.y + '/' + w.m + '/' + w.d] = 1; }); });
+    function exKey(d) { return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate(); }
+    var res = [], n = 0, guard = 0, cur = dateOnly(start);
+    function take(d) { if (d >= ws && d < weekEnd && !ex[exKey(d)]) res.push(dateOnly(d)); }
+    if (freq === 'WEEKLY') {
+      var days = byday && byday.length ? byday : [start.getDay()];
+      while (guard++ < 6000 && n < count && cur < weekEnd) {
+        if (untilD && cur > untilD) break;
+        var wk = Math.round((mondayMs(cur) - mondayMs(start)) / 604800000);
+        if (wk >= 0 && wk % interval === 0 && days.indexOf(cur.getDay()) >= 0) { take(cur); n++; }
+        cur.setDate(cur.getDate() + 1);
+      }
+    } else if (freq === 'MONTHLY' || freq === 'YEARLY') {
+      while (guard++ < 1200 && n < count && cur < weekEnd) {
+        if (untilD && cur > untilD) break;
+        take(cur); n++;
+        if (freq === 'MONTHLY') cur.setMonth(cur.getMonth() + interval);
+        else cur.setFullYear(cur.getFullYear() + interval);
+      }
+    } else { // DAILY (and a safe default)
+      while (guard++ < 6000 && n < count && cur < weekEnd) {
+        if (untilD && cur > untilD) break;
+        take(cur); n++;
+        cur.setDate(cur.getDate() + interval);
+      }
+    }
+    return res;
+  }
+
+  function icsToMeetings(events) {
+    var ws = dateOnly(weekStart);
+    var weekEnd = new Date(ws); weekEnd.setDate(weekEnd.getDate() + 7);
+    var out = [];
+    events.forEach(function (ev) {
+      if (!ev.start) return;
+      var s = icsWhen(ev.startP, ev.start);
+      if (!s || s.allDay) return;                       // skip all-day banners
+      var startMin = s.hh * 60 + s.mm, durMin;
+      var e = ev.end ? icsWhen(ev.endP, ev.end) : null;
+      if (e && !e.allDay) {
+        durMin = Math.round((new Date(e.y, e.m - 1, e.d, e.hh, e.mm) - new Date(s.y, s.m - 1, s.d, s.hh, s.mm)) / 60000);
+      } else if (ev.duration) {
+        durMin = icsDurationMin(ev.duration);
+      } else durMin = 30;
+      if (!(durMin > 0)) durMin = 30;
+      if (durMin >= 1440) durMin = 1439;                // clamp anything day-spanning
+      var endMin = startMin + durMin;
+      var title = icsUnescape(ev.summary) || 'Meeting';
+      var startDate = new Date(s.y, s.m - 1, s.d);
+      var dates = ev.rrule
+        ? expandRRULE(ev.rrule, startDate, ws, weekEnd, ev.exdate)
+        : (startDate >= ws && startDate < weekEnd ? [dateOnly(startDate)] : []);
+      dates.forEach(function (d) {
+        out.push({ date: iso(d), start: icsHHMM(startMin), end: icsHHMM(endMin), title: title });
+      });
+    });
+    // Earliest first reads naturally in the preview.
+    out.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.start < b.start ? -1 : 1; });
+    return out;
+  }
+
+  document.getElementById('icsFile').addEventListener('change', function () {
+    var file = this.files && this.files[0];
+    this.value = '';                                    // let the same file be picked again
+    if (!file) return;
+    var err = document.getElementById('importError');
+    var reader = new FileReader();
+    reader.onerror = function () { err.style.display = ''; err.textContent = 'Could not read that file.'; };
+    reader.onload = function () {
+      var meetings;
+      try { meetings = icsToMeetings(parseICS(reader.result)); }
+      catch (e) { err.style.display = ''; err.textContent = 'That does not look like a calendar (.ics) file.'; return; }
+      if (!meetings.length) {
+        codeBox.value = ''; importParsed = null; renderImportPreview(); updateAddBtn();
+        noteEl.style.display = 'none'; document.getElementById('importSuccess').style.display = 'none';
+        err.style.display = '';
+        err.textContent = 'No timed meetings for the week of ' + fmt(weekStart) + ' – ' + fmt(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6)) +
+          ' were found in that file. In Outlook, set the save range to this week (and move to that week here first).';
+        return;
+      }
+      codeBox.value = JSON.stringify({ meetings: meetings });
+      runPreview();                                     // shared preview / dedup / add
+    };
+    reader.readAsText(file);
+  });
 
   /* ================= Backup & restore =================
      Everything lives in localStorage, which iOS Safari will delete after
