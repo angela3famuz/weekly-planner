@@ -2619,22 +2619,69 @@
     min = ((min % 1440) + 1440) % 1440;
     return String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
   }
-  // ICS date/time -> {y,m,d,hh,mm,allDay}. Wall-clock components are used as
-  // written (the calendar is the user's own, in their own zone); a trailing Z
-  // is converted from UTC to local so those events still land on the right time.
+  // Outlook stamps events with Windows time-zone names; map the common ones to
+  // IANA zones so the browser can do the daylight-saving-aware conversion.
+  var WIN_TZ = {
+    'Dateline Standard Time': 'Etc/GMT+12', 'Hawaiian Standard Time': 'Pacific/Honolulu',
+    'Alaskan Standard Time': 'America/Anchorage', 'Pacific Standard Time': 'America/Los_Angeles',
+    'Pacific Standard Time (Mexico)': 'America/Tijuana', 'US Mountain Standard Time': 'America/Phoenix',
+    'Mountain Standard Time': 'America/Denver', 'Central Standard Time': 'America/Chicago',
+    'Central Standard Time (Mexico)': 'America/Mexico_City', 'Canada Central Standard Time': 'America/Regina',
+    'Eastern Standard Time': 'America/New_York', 'US Eastern Standard Time': 'America/New_York',
+    'Atlantic Standard Time': 'America/Halifax', 'Newfoundland Standard Time': 'America/St_Johns',
+    'SA Pacific Standard Time': 'America/Bogota', 'SA Eastern Standard Time': 'America/Cayenne',
+    'GMT Standard Time': 'Europe/London', 'Greenwich Standard Time': 'Etc/GMT', 'UTC': 'UTC',
+    'W. Europe Standard Time': 'Europe/Berlin', 'Central Europe Standard Time': 'Europe/Budapest',
+    'Central European Standard Time': 'Europe/Warsaw', 'Romance Standard Time': 'Europe/Paris',
+    'E. Europe Standard Time': 'Europe/Chisinau', 'GTB Standard Time': 'Europe/Athens',
+    'Israel Standard Time': 'Asia/Jerusalem', 'Arabian Standard Time': 'Asia/Dubai',
+    'India Standard Time': 'Asia/Kolkata', 'China Standard Time': 'Asia/Shanghai',
+    'Singapore Standard Time': 'Asia/Singapore', 'Tokyo Standard Time': 'Asia/Tokyo',
+    'Korea Standard Time': 'Asia/Seoul', 'AUS Eastern Standard Time': 'Australia/Sydney',
+    'New Zealand Standard Time': 'Pacific/Auckland'
+  };
+  // Offset (minutes east of UTC) that `zone` was at the instant `ts`.
+  function zoneOffsetMin(zone, ts) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' }).formatToParts(new Date(ts));
+      var name = parts.find(function (p) { return p.type === 'timeZoneName'; }).value; // "GMT-05:00" / "GMT"
+      var mm = name.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+      if (!mm) return 0;
+      var mins = (+mm[2]) * 60 + (+(mm[3] || 0));
+      return mm[1] === '-' ? -mins : mins;
+    } catch (e) { return null; }
+  }
+  // A wall-clock time in `zone` -> the equivalent instant as a local Date.
+  function zonedToDate(zone, y, m, d, hh, mm) {
+    var guess = Date.UTC(y, m - 1, d, hh, mm);
+    var off = zoneOffsetMin(zone, guess);
+    if (off == null) return null;
+    off = zoneOffsetMin(zone, guess - off * 60000); // re-read across a DST edge
+    return new Date(guess - off * 60000);
+  }
+  // ICS date/time -> {y,m,d,hh,mm,allDay} in the viewer's local zone. All-day
+  // values are floating; a trailing Z is UTC; a TZID is converted from its zone.
   function icsWhen(params, value) {
     value = String(value || '').trim();
     if (/VALUE=DATE(?![-A-Z])/i.test(params || '') || /^\d{8}$/.test(value)) {
-      var d = value.match(/^(\d{4})(\d{2})(\d{2})/);
-      return d ? { y: +d[1], m: +d[2], d: +d[3], hh: 0, mm: 0, allDay: true } : null;
+      var da = value.match(/^(\d{4})(\d{2})(\d{2})/);
+      return da ? { y: +da[1], m: +da[2], d: +da[3], hh: 0, mm: 0, allDay: true } : null;
     }
     var m = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?/);
     if (!m) return null;
+    var local = null;
     if (m[7] === 'Z') {
-      var u = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
-      return { y: u.getFullYear(), m: u.getMonth() + 1, d: u.getDate(), hh: u.getHours(), mm: u.getMinutes(), allDay: false };
+      local = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+    } else {
+      var tzid = (String(params || '').match(/TZID=([^;:]+)/i) || [])[1];
+      if (tzid) {
+        tzid = tzid.trim().replace(/^"|"$/g, '');
+        var zone = WIN_TZ[tzid] || (zoneOffsetMin(tzid, Date.now()) != null ? tzid : null);
+        if (zone) local = zonedToDate(zone, +m[1], +m[2], +m[3], +m[4], +m[5], +m[6]);
+      }
     }
-    return { y: +m[1], m: +m[2], d: +m[3], hh: +m[4], mm: +m[5], allDay: false };
+    if (local) return { y: local.getFullYear(), m: local.getMonth() + 1, d: local.getDate(), hh: local.getHours(), mm: local.getMinutes(), allDay: false };
+    return { y: +m[1], m: +m[2], d: +m[3], hh: +m[4], mm: +m[5], allDay: false }; // floating / unknown zone
   }
   function icsDurationMin(d) {
     var m = String(d || '').match(/P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?/i);
