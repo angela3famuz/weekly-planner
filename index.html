@@ -848,7 +848,7 @@
       <span class="fld-label">Load a calendar file (.ics)</span>
       <input type="file" id="icsFile" accept=".ics,text/calendar">
     </label>
-    <p class="import-hint">Desktop Outlook: <b>File &rarr; Save Calendar</b>, set the range to <b>this week</b> with <b>Full details</b>, save the <b>.ics</b>, then load it here. It is read on your device — nothing is uploaded.</p>
+    <p class="import-hint">Desktop Outlook: <b>File &rarr; Save Calendar</b>, choose a range (a week or a whole month) with <b>Full details</b>, save the <b>.ics</b>, then load it here. Whatever range you export is what gets imported. It is read on your device — nothing is uploaded.</p>
 
     <label class="cat-row" style="margin: var(--s3) 0;">Add these as
       <select id="importCat"></select>
@@ -2669,8 +2669,30 @@
   }
 
   function icsToMeetings(events) {
-    var ws = dateOnly(weekStart);
-    var weekEnd = new Date(ws); weekEnd.setDate(weekEnd.getDate() + 7);
+    // Import the range the file actually covers, so a week's export adds a week
+    // and a month's export adds a month (you pick the range in Outlook's export
+    // dialog). The window spans the file's dated events; recurring events expand
+    // across it, clamped so one unbounded rule can't run away.
+    var minC = null, maxC = null;
+    events.forEach(function (ev) {
+      if (!ev.start || ev.rrule) return;
+      var w = icsWhen(ev.startP, ev.start);
+      if (!w || w.allDay) return;
+      var t = new Date(w.y, w.m - 1, w.d).getTime();
+      if (minC === null || t < minC) minC = t;
+      if (maxC === null || t > maxC) maxC = t;
+    });
+    var ws, weekEnd;
+    if (minC !== null) {
+      ws = new Date(minC);
+      weekEnd = new Date(maxC); weekEnd.setDate(weekEnd.getDate() + 1);
+    } else {
+      // Only recurring events, no dated anchor: fall back to ~6 weeks around now.
+      ws = dateOnly(weekStart); ws.setDate(ws.getDate() - 7);
+      weekEnd = dateOnly(weekStart); weekEnd.setDate(weekEnd.getDate() + 35);
+    }
+    var cap = new Date(ws); cap.setDate(cap.getDate() + 400);
+    if (weekEnd > cap) weekEnd = cap;
     var out = [];
     events.forEach(function (ev) {
       if (!ev.start) return;
@@ -2715,8 +2737,7 @@
         codeBox.value = ''; importParsed = null; renderImportPreview(); updateAddBtn();
         noteEl.style.display = 'none'; document.getElementById('importSuccess').style.display = 'none';
         err.style.display = '';
-        err.textContent = 'No timed meetings for the week of ' + fmt(weekStart) + ' – ' + fmt(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6)) +
-          ' were found in that file. In Outlook, set the save range to this week (and move to that week here first).';
+        err.textContent = 'No timed meetings were found in that file — only all-day items, or nothing in range. Check the save range you chose in Outlook.';
         return;
       }
       codeBox.value = JSON.stringify({ meetings: meetings });
