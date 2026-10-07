@@ -352,6 +352,7 @@
   .mstat { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--line); background: var(--surface); color: transparent; font-size: 13px; font-weight: 800; line-height: 1; cursor: pointer; align-self: center; }
   .mstat.done { border-color: var(--done); background: var(--done); color: #fff; }
   .mstat.missed { border-color: var(--now); background: var(--now); color: #fff; }
+  .msub .mark-cue { color: var(--accent-ink); font-weight: 600; cursor: pointer; }
   .mtg.m-missed .title-txt { text-decoration: line-through; text-decoration-color: var(--now); color: var(--ink-3); }
   .mtg.m-done .title-txt { color: var(--ink-2); }
   /* categories */
@@ -403,6 +404,16 @@
   .imp-row .ir-title { flex: 1; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .imp-row.dup { opacity: .55; }
   .imp-row .ir-tag { flex: none; font-size: 9.5px; font-weight: 800; padding: 1px 5px; border-radius: 4px; background: var(--line-2); color: var(--ink-3); }
+  /* tidy up */
+  .tidy-sec { margin-top: 14px; }
+  .tidy-h { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+  .tidy-note { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+  .tidy-list { max-height: 230px; overflow-y: auto; }
+  .tidy-row { display: flex; align-items: center; gap: 11px; padding: 9px 0; border-top: 1px solid var(--line-2); cursor: pointer; }
+  .tidy-row input { flex: none; width: 17px; height: 17px; }
+  .tidy-info { flex: 1; min-width: 0; }
+  .tidy-title { font-size: 14px; color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tidy-meta { font-size: 12px; color: var(--ink-3); }
   .codebox { display: flex; align-items: center; gap: 8px; }
   .codebox code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 12px; background: var(--line-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; color: var(--ink-2); }
 </style>
@@ -491,7 +502,7 @@
       <span class="dlabel" id="weekLabel2"></span>
       <button class="today-btn" id="thisWeekBtn2">This week</button>
     </div>
-    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one · <button class="linkbtn" id="catsBtn">Categories</button> · <button class="linkbtn" id="importBtn">Import</button><input type="file" id="icsFile" accept=".ics,text/calendar" hidden></p>
+    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one · <button class="linkbtn" id="catsBtn">Categories</button> · <button class="linkbtn" id="importBtn">Import</button> · <button class="linkbtn" id="tidyBtn">Tidy up</button><input type="file" id="icsFile" accept=".ics,text/calendar" hidden></p>
     <div class="sched-scroll" id="schedScroll"></div>
   </div>
 
@@ -566,6 +577,19 @@
     <div class="sheet-btns">
       <button class="btn ghost" id="addCancel">Cancel</button>
       <button class="btn primary" id="addSave">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tidy up: dedupe + auto-detect recurring one-offs -->
+<div class="overlay" id="tidyOverlay">
+  <div class="sheet">
+    <h3>Tidy up the schedule</h3>
+    <p class="hint">Finds exact duplicate meetings, and one-off meetings that actually repeat — so you can remove the extras and link recurring ones into threads (which unlocks prep carry-over).</p>
+    <div id="tidyBody"></div>
+    <div class="sheet-btns">
+      <button class="btn ghost" id="tidyClose">Close</button>
+      <button class="btn primary" id="tidyApply" hidden>Apply</button>
     </div>
   </div>
 </div>
@@ -1347,6 +1371,103 @@
     footFlash('Imported ' + added + ' meeting' + (added === 1 ? '' : 's') + '.');
   };
 
+  // ---------- tidy up: dedupe + auto-detect recurring one-offs ----------
+  var tidyOverlay = document.getElementById('tidyOverlay'), tidyScan = null;
+  function dupScore(m) { return (m.thread ? 8 : 0) + ((m.transcript || '').trim() ? 4 : 0) + (m.status ? 2 : 0) + (m.seriesId ? 1 : 0) + (m.cat ? 1 : 0); }
+  // Decide a cadence from a set of dates, high-precision (returns null if irregular).
+  function detectCadence(dates) {
+    var ms = dates.map(function (d) { return parseIso(d).getTime(); }).sort(function (a, b) { return a - b; });
+    var gaps = [];
+    for (var i = 1; i < ms.length; i++) { var dd = Math.round((ms[i] - ms[i - 1]) / 86400000); if (dd > 0) gaps.push(dd); }
+    if (gaps.length < 2) return null; // need ≥3 distinct dates
+    if (gaps.every(function (x) { return x % 7 === 0; })) return { cadence: 'weekly', interval: Math.max(1, Math.min(12, Math.min.apply(null, gaps) / 7)) };
+    var allWeekdays = dates.every(function (d) { var w = parseIso(d).getDay(); return w !== 0 && w !== 6; });
+    if (allWeekdays && gaps.every(function (x) { return x >= 1 && x <= 4; })) return { cadence: 'weekday', interval: 1 };
+    var k = gaps[0];
+    if (k >= 1 && k <= 6 && gaps.every(function (x) { return x === k; })) return { cadence: 'daily', interval: k };
+    return null;
+  }
+  function scanTidy() {
+    // 1) exact duplicates (same date + start + title); keep the richest copy.
+    var byKey = {}, removeIds = {};
+    state.meetings.forEach(function (m) { var k = m.dateIso + '|' + m.start + '|' + String(m.title || '').trim().toLowerCase(); (byKey[k] = byKey[k] || []).push(m); });
+    Object.keys(byKey).forEach(function (k) {
+      var g = byKey[k]; if (g.length < 2) return;
+      g.sort(function (a, b) { return dupScore(b) - dupScore(a); });
+      for (var i = 1; i < g.length; i++) removeIds[g[i].id] = 1;
+    });
+    // 2) one-off meetings that recur (same title + start), ≥3 dates, regular cadence.
+    var byTitle = {};
+    state.meetings.forEach(function (m) {
+      if (m.seriesId || removeIds[m.id]) return;
+      var k = String(m.title || '').trim().toLowerCase() + '|' + m.start;
+      (byTitle[k] = byTitle[k] || []).push(m);
+    });
+    var groups = [];
+    Object.keys(byTitle).forEach(function (k) {
+      var g = byTitle[k]; if (g.length < 3) return;
+      var dates = g.map(function (m) { return m.dateIso; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort();
+      if (dates.length < 3) return;
+      var cad = detectCadence(dates); if (!cad) return;
+      groups.push({ title: g[0].title, start: g[0].start, dur: g[0].dur, count: g.length, cadence: cad.cadence, interval: cad.interval, color: g[0].color || null, ids: g.map(function (m) { return m.id; }), checked: true });
+    });
+    groups.sort(function (a, b) { return b.count - a.count; });
+    return { removeIds: Object.keys(removeIds), dupeCount: Object.keys(removeIds).length, groups: groups };
+  }
+  function renderTidy() {
+    tidyScan = scanTidy();
+    var body = $('tidyBody'); body.innerHTML = '';
+    if (!tidyScan.dupeCount && !tidyScan.groups.length) {
+      body.appendChild(el('div', 'empty-note', 'Nothing to tidy — no duplicates or unlinked recurring meetings found. ✓'));
+      $('tidyApply').hidden = true; return;
+    }
+    if (tidyScan.dupeCount) {
+      var d = el('div', 'tidy-sec');
+      d.appendChild(el('div', 'tidy-h', 'Duplicates'));
+      d.appendChild(el('div', 'tidy-note', tidyScan.dupeCount + ' exact duplicate meeting' + (tidyScan.dupeCount > 1 ? 's' : '') + ' will be removed — the copy with the most content (transcript, thread, status) is kept.'));
+      body.appendChild(d);
+    }
+    if (tidyScan.groups.length) {
+      var gsec = el('div', 'tidy-sec');
+      gsec.appendChild(el('div', 'tidy-h', 'Recurring meetings → link into threads'));
+      var list = el('div', 'tidy-list');
+      tidyScan.groups.forEach(function (grp) {
+        var row = el('label', 'tidy-row');
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = grp.checked; cb.onchange = function () { grp.checked = cb.checked; };
+        row.appendChild(cb);
+        var info = el('div', 'tidy-info');
+        info.appendChild(el('div', 'tidy-title', grp.title));
+        var c = fmtClock(grp.start);
+        info.appendChild(el('div', 'tidy-meta', cadenceLabel(grp) + ' · ' + grp.count + ' occurrences · ' + c.t + c.ap.toLowerCase()));
+        row.appendChild(info); list.appendChild(row);
+      });
+      gsec.appendChild(list); body.appendChild(gsec);
+    }
+    $('tidyApply').hidden = false;
+  }
+  document.getElementById('tidyBtn').onclick = function () { renderTidy(); tidyOverlay.classList.add('open'); };
+  $('tidyClose').onclick = function () { tidyOverlay.classList.remove('open'); };
+  tidyOverlay.onclick = function (e) { if (e.target === tidyOverlay) tidyOverlay.classList.remove('open'); };
+  $('tidyApply').onclick = function () {
+    if (!tidyScan) { tidyOverlay.classList.remove('open'); return; }
+    var remove = {}; tidyScan.removeIds.forEach(function (id) { remove[id] = 1; });
+    if (tidyScan.removeIds.length) state.meetings = state.meetings.filter(function (m) { return !remove[m.id]; });
+    var linked = 0;
+    tidyScan.groups.forEach(function (grp) {
+      if (!grp.checked) return;
+      var sid = 's' + uid();
+      state.series.push({ id: sid, title: grp.title, cadence: grp.cadence, interval: grp.interval, color: grp.color || COLORS[state.series.length % COLORS.length] });
+      var ids = {}; grp.ids.forEach(function (id) { ids[id] = 1; });
+      state.meetings.forEach(function (m) { if (ids[m.id] && !remove[m.id]) m.seriesId = sid; });
+      linked++;
+    });
+    state.demo = false; save(); tidyOverlay.classList.remove('open'); render();
+    var parts = [];
+    if (tidyScan.removeIds.length) parts.push('Removed ' + tidyScan.removeIds.length + ' duplicate' + (tidyScan.removeIds.length > 1 ? 's' : ''));
+    if (linked) parts.push('Linked ' + linked + ' thread' + (linked > 1 ? 's' : ''));
+    footFlash(parts.join(' · ') || 'Nothing changed.');
+  };
+
   // ---------- view routing ----------
   function setView(v) {
     view = v;
@@ -1499,6 +1620,14 @@
       } else {
         sub.appendChild(el('span', null, fmtClock(m.start).t + fmtClock(m.start).ap.toLowerCase() + '–' + fmtClock(m.start + m.dur).t + fmtClock(m.start + m.dur).ap.toLowerCase()));
       }
+    }
+    // A past meeting you haven't marked yet: show it can be marked (the dot on the right).
+    if (st === 'past' && !m.status) {
+      if (sub.childNodes.length) sub.appendChild(el('span', null, ' · '));
+      var cue = el('span', 'mark-cue', 'mark done?');
+      cue.title = 'Mark completed (tap the circle on the right for missed)';
+      cue.onclick = function (e) { e.stopPropagation(); m.status = 'done'; save(); render(); };
+      sub.appendChild(cue);
     }
     return sub;
   }
