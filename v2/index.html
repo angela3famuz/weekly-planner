@@ -330,7 +330,9 @@
   .btn.sm { min-height: 32px; padding: 0 11px; font-size: 12.5px; }
 
   .foot { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
-  .foot b { color: var(--ink-2); } .reset { float: right; }
+  .foot b { color: var(--ink-2); }
+  .foot-tools { display: block; margin-bottom: 8px; }
+  .foot-flash { color: var(--done); font-weight: 700; font-size: 11.5px; }
 </style>
 </head>
 <body>
@@ -409,9 +411,15 @@
   </div>
 
   <div class="foot">
-    <button class="btn ghost reset" id="resetBtn" style="min-height:30px;padding:0 11px;font-size:11.5px">Reset demo</button>
+    <span class="foot-tools">
+      <button class="linkbtn" id="backupBtn">Download backup</button> ·
+      <button class="linkbtn" id="restoreBtn">Restore</button> ·
+      <button class="linkbtn" id="resetBtn">Reset demo</button>
+      <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+    </span>
+    <span class="foot-flash" id="footFlash"></span>
     <b>Thread — cockpit.</b> Your present-tense planner. Meetings are threads; the week is where
-    you set intentions. Everything stays on this device.
+    you set intentions. Everything stays on this device — back it up to be safe.
   </div>
 </div>
 
@@ -644,8 +652,19 @@
   }
 
   // ---------- Week (planner) ----------
+  // The first time the current week is opened, unfinished priorities/to-dos
+  // from last week follow you in — reset to open and marked carried. Once only.
+  function maybeCarryOver() {
+    if (iso(weekStart) !== iso(mondayOf(new Date())) || wk.carried) return;
+    var prev = loadWeek(addDays(weekStart, -7));
+    ['priorities', 'todos'].forEach(function (key) {
+      (prev[key] || []).forEach(function (it) { if (it.status !== 'done') wk[key].push({ text: it.text, status: '', carried: true }); });
+    });
+    wk.carried = true; saveWeek(weekStart, wk);
+  }
   function renderWeek() {
     wk = loadWeek(weekStart);
+    maybeCarryOver();
     updateWeekLabel('weekLabel', 'thisWeekBtn');
     var f = document.getElementById('focus'); f.value = wk.focus || ''; autoGrow(f);
     renderChecklist(document.getElementById('priorities'), wk.priorities, 'No priorities set for this week.');
@@ -1123,7 +1142,41 @@
     save(); addOverlay.classList.remove('open'); render();
   };
 
-  document.getElementById('resetBtn').onclick = function () { if (confirm('Reset the demo to its starting state?')) { state = seed(); viewed = todayIso(); save(); render(); } };
+  document.getElementById('resetBtn').onclick = function () { if (confirm('Reset the demo to its starting state? (Your weeks, habits and backups stay.)')) { state = seed(); viewed = todayIso(); save(); render(); } };
+
+  // ---------- backup / restore (everything is local; this is the safety net) ----------
+  function footFlash(msg, bad) { var f = document.getElementById('footFlash'); f.textContent = msg; f.style.color = bad ? '#c0392b' : 'var(--done)'; setTimeout(function () { f.textContent = ''; }, 3200); }
+  document.getElementById('backupBtn').onclick = function () {
+    var data = { app: 'thread', version: 1, exported: new Date().toISOString(), meetings: state, habits: getHabits(), weeks: {}, settings: {} };
+    try {
+      for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('thread-wk-') === 0) { try { data.weeks[k] = JSON.parse(localStorage.getItem(k)); } catch (e) {} } }
+      data.settings.notify = localStorage.getItem('thread-notify') || '0';
+    } catch (e) {}
+    var a = document.createElement('a');
+    a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data));
+    a.download = 'thread-backup-' + todayIso() + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    footFlash('Backup downloaded.');
+  };
+  document.getElementById('restoreBtn').onclick = function () { document.getElementById('restoreFile').click(); };
+  document.getElementById('restoreFile').onchange = function () {
+    var file = this.files && this.files[0]; this.value = ''; if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var data; try { data = JSON.parse(reader.result); } catch (e) { footFlash('That file is not valid JSON.', true); return; }
+      if (!data || data.app !== 'thread' || !data.meetings) { footFlash('That is not a Thread backup.', true); return; }
+      if (!confirm('Restore this backup? It replaces your current meetings, weeks and habits.')) return;
+      try {
+        state = data.meetings; save();
+        if (Array.isArray(data.habits)) saveHabits(data.habits);
+        if (data.weeks) Object.keys(data.weeks).forEach(function (k) { if (k.indexOf('thread-wk-') === 0) localStorage.setItem(k, JSON.stringify(data.weeks[k])); });
+        if (data.settings && data.settings.notify != null) localStorage.setItem('thread-notify', data.settings.notify);
+      } catch (e) { footFlash('Restore failed.', true); return; }
+      viewed = todayIso(); weekStart = mondayOf(new Date()); wk = loadWeek(weekStart);
+      footFlash('Restored.'); render();
+    };
+    reader.readAsText(file);
+  };
 
   // ---------- reminders ----------
   var hasNotif = typeof Notification !== 'undefined';
