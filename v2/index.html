@@ -622,7 +622,21 @@
     var n = Math.max(1, s.interval || 1);
     if (s.cadence === 'weekday') return 'Weekdays';
     if (s.cadence === 'daily') return n > 1 ? 'Every ' + n + ' days' : 'Daily';
+    if (s.cadence === 'monthly') return n > 1 ? 'Every ' + n + ' mths' : 'Monthly';
+    if (s.cadence === 'yearly') return n > 1 ? 'Every ' + n + ' yrs' : 'Yearly';
     return n > 1 ? 'Every ' + n + ' wks' : 'Weekly';
+  }
+  // Map an iCalendar RRULE to our cadence + interval (for the badge on imported series).
+  function cadenceFromRRULE(rrule) {
+    var p = {}; String(rrule).split(';').forEach(function (kv) { var i = kv.indexOf('='); if (i > 0) p[kv.slice(0, i).toUpperCase()] = kv.slice(i + 1).toUpperCase(); });
+    var freq = p.FREQ, n = Math.max(1, parseInt(p.INTERVAL || '1', 10) || 1);
+    var days = (p.BYDAY ? p.BYDAY.split(',') : []).map(function (d) { return d.replace(/^[+-]?\d+/, ''); });
+    var allWeekdays = days.length === 5 && ['MO', 'TU', 'WE', 'TH', 'FR'].every(function (d) { return days.indexOf(d) !== -1; });
+    if ((freq === 'WEEKLY' || freq === 'DAILY') && allWeekdays && n === 1) return { cadence: 'weekday', interval: 1 };
+    if (freq === 'DAILY') return { cadence: 'daily', interval: n };
+    if (freq === 'MONTHLY') return { cadence: 'monthly', interval: n };
+    if (freq === 'YEARLY') return { cadence: 'yearly', interval: n };
+    return { cadence: 'weekly', interval: n };
   }
   // Dates for a recurring series starting at startIso. includeStart=false yields only the
   // occurrences after it (for converting an existing meeting, whose own date already exists).
@@ -966,7 +980,7 @@
       var dates = ev.rrule ? expandRRULE(ev.rrule, startDate, ws, weekEnd, ev.exdate) : (startDate >= ws && startDate < weekEnd ? [dateOnly(startDate)] : []);
       if (!dates.length) return;
       var sid = null;
-      if (ev.rrule) { sid = 's' + uid(); series.push({ id: sid, title: title, cadence: /FREQ=DAILY/i.test(ev.rrule) ? 'daily' : 'weekly', color: COLORS[(state.series.length + series.length) % COLORS.length] }); }
+      if (ev.rrule) { var c = cadenceFromRRULE(ev.rrule); sid = 's' + uid(); series.push({ id: sid, title: title, cadence: c.cadence, interval: c.interval, color: COLORS[(state.series.length + series.length) % COLORS.length] }); }
       dates.forEach(function (d) {
         var diso = iso(d);
         if (exists(diso, startMin, title)) { dup++; return; }
