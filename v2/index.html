@@ -406,7 +406,7 @@
       <span class="dlabel" id="weekLabel2"></span>
       <button class="today-btn" id="thisWeekBtn2">This week</button>
     </div>
-    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one.</p>
+    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one · <button class="linkbtn" id="icsBtn">Import .ics</button><input type="file" id="icsFile" accept=".ics,text/calendar" hidden></p>
     <div class="sched-scroll" id="schedScroll"></div>
   </div>
 
@@ -800,6 +800,123 @@
   document.getElementById('prevWeek2').onclick = function () { weekStart = mondayOf(addDays(weekStart, -7)); renderSchedule(); };
   document.getElementById('nextWeek2').onclick = function () { weekStart = mondayOf(addDays(weekStart, 7)); renderSchedule(); };
   document.getElementById('thisWeekBtn2').onclick = function () { weekStart = mondayOf(new Date()); renderSchedule(); };
+
+  // ---------- .ics calendar import (ported from v1; threads recurring events) ----------
+  function unfoldICS(text) { return String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n[ \t]/g, ''); }
+  function icsUnescape(s) { return String(s || '').replace(/\\n/gi, ' ').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\').trim(); }
+  var WIN_TZ = {
+    'Dateline Standard Time': 'Etc/GMT+12', 'Hawaiian Standard Time': 'Pacific/Honolulu', 'Alaskan Standard Time': 'America/Anchorage',
+    'Pacific Standard Time': 'America/Los_Angeles', 'Pacific Standard Time (Mexico)': 'America/Tijuana', 'US Mountain Standard Time': 'America/Phoenix',
+    'Mountain Standard Time': 'America/Denver', 'Central Standard Time': 'America/Chicago', 'Central Standard Time (Mexico)': 'America/Mexico_City',
+    'Canada Central Standard Time': 'America/Regina', 'Eastern Standard Time': 'America/New_York', 'US Eastern Standard Time': 'America/New_York',
+    'Atlantic Standard Time': 'America/Halifax', 'Newfoundland Standard Time': 'America/St_Johns', 'SA Pacific Standard Time': 'America/Bogota',
+    'SA Eastern Standard Time': 'America/Cayenne', 'GMT Standard Time': 'Europe/London', 'Greenwich Standard Time': 'Etc/GMT', 'UTC': 'UTC',
+    'W. Europe Standard Time': 'Europe/Berlin', 'Central Europe Standard Time': 'Europe/Budapest', 'Central European Standard Time': 'Europe/Warsaw',
+    'Romance Standard Time': 'Europe/Paris', 'E. Europe Standard Time': 'Europe/Chisinau', 'GTB Standard Time': 'Europe/Athens',
+    'Israel Standard Time': 'Asia/Jerusalem', 'Arabian Standard Time': 'Asia/Dubai', 'India Standard Time': 'Asia/Kolkata', 'China Standard Time': 'Asia/Shanghai',
+    'Singapore Standard Time': 'Asia/Singapore', 'Tokyo Standard Time': 'Asia/Tokyo', 'Korea Standard Time': 'Asia/Seoul',
+    'AUS Eastern Standard Time': 'Australia/Sydney', 'New Zealand Standard Time': 'Pacific/Auckland'
+  };
+  function zoneOffsetMin(zone, ts) {
+    try {
+      var parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' }).formatToParts(new Date(ts));
+      var name = parts.find(function (p) { return p.type === 'timeZoneName'; }).value;
+      var mm = name.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/); if (!mm) return 0;
+      var mins = (+mm[2]) * 60 + (+(mm[3] || 0)); return mm[1] === '-' ? -mins : mins;
+    } catch (e) { return null; }
+  }
+  function zonedToDate(zone, y, m, d, hh, mm) { var g = Date.UTC(y, m - 1, d, hh, mm); var o = zoneOffsetMin(zone, g); if (o == null) return null; o = zoneOffsetMin(zone, g - o * 60000); return new Date(g - o * 60000); }
+  function icsWhen(params, value) {
+    value = String(value || '').trim();
+    if (/VALUE=DATE(?![-A-Z])/i.test(params || '') || /^\d{8}$/.test(value)) { var da = value.match(/^(\d{4})(\d{2})(\d{2})/); return da ? { y: +da[1], m: +da[2], d: +da[3], hh: 0, mm: 0, allDay: true } : null; }
+    var m = value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?/); if (!m) return null;
+    var local = null;
+    if (m[7] === 'Z') { local = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])); }
+    else { var tzid = (String(params || '').match(/TZID=([^;:]+)/i) || [])[1]; if (tzid) { tzid = tzid.trim().replace(/^"|"$/g, ''); var zone = WIN_TZ[tzid] || (zoneOffsetMin(tzid, Date.now()) != null ? tzid : null); if (zone) local = zonedToDate(zone, +m[1], +m[2], +m[3], +m[4], +m[5], +m[6]); } }
+    if (local) return { y: local.getFullYear(), m: local.getMonth() + 1, d: local.getDate(), hh: local.getHours(), mm: local.getMinutes(), allDay: false };
+    return { y: +m[1], m: +m[2], d: +m[3], hh: +m[4], mm: +m[5], allDay: false };
+  }
+  function icsDurationMin(d) { var m = String(d || '').match(/P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?/i); if (!m) return 0; return (+(m[1] || 0)) * 10080 + (+(m[2] || 0)) * 1440 + (+(m[3] || 0)) * 60 + (+(m[4] || 0)); }
+  function parseICS(text) {
+    var lines = unfoldICS(text).split('\n'), events = [], cur = null;
+    lines.forEach(function (line) {
+      if (/^BEGIN:VEVENT/i.test(line)) { cur = { exdate: [] }; return; }
+      if (/^END:VEVENT/i.test(line)) { if (cur) events.push(cur); cur = null; return; }
+      if (!cur) return; var i = line.indexOf(':'); if (i < 0) return;
+      var name = line.slice(0, i), val = line.slice(i + 1), key = name.split(';')[0].toUpperCase();
+      if (key === 'DTSTART') { cur.startP = name; cur.start = val; } else if (key === 'DTEND') { cur.endP = name; cur.end = val; }
+      else if (key === 'SUMMARY') cur.summary = val; else if (key === 'RRULE') cur.rrule = val; else if (key === 'DURATION') cur.duration = val; else if (key === 'EXDATE') cur.exdate.push(val);
+    });
+    return events;
+  }
+  function dateOnly(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function mondayMs(d) { var x = dateOnly(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.getTime(); }
+  function expandRRULE(rrule, start, ws, weekEnd, exdates) {
+    var p = {}; String(rrule).split(';').forEach(function (kv) { var i = kv.indexOf('='); if (i > 0) p[kv.slice(0, i).toUpperCase()] = kv.slice(i + 1).toUpperCase(); });
+    var freq = p.FREQ, interval = Math.max(1, parseInt(p.INTERVAL || '1', 10) || 1), count = p.COUNT ? parseInt(p.COUNT, 10) : Infinity;
+    var untilD = null; if (p.UNTIL) { var w = icsWhen('', p.UNTIL); if (w) untilD = new Date(w.y, w.m - 1, w.d, 23, 59); }
+    var DOW = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+    var byday = p.BYDAY ? p.BYDAY.split(',').map(function (s) { return DOW[s.slice(-2)]; }).filter(function (n) { return n != null; }) : null;
+    var ex = {}; (exdates || []).forEach(function (v) { String(v).split(',').forEach(function (o) { var w = icsWhen('', o.trim()); if (w) ex[w.y + '/' + w.m + '/' + w.d] = 1; }); });
+    function exKey(d) { return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate(); }
+    var res = [], n = 0, guard = 0, cur = dateOnly(start);
+    function take(d) { if (d >= ws && d < weekEnd && !ex[exKey(d)]) res.push(dateOnly(d)); }
+    if (freq === 'WEEKLY') { var days = byday && byday.length ? byday : [start.getDay()]; while (guard++ < 6000 && n < count && cur < weekEnd) { if (untilD && cur > untilD) break; var wkn = Math.round((mondayMs(cur) - mondayMs(start)) / 604800000); if (wkn >= 0 && wkn % interval === 0 && days.indexOf(cur.getDay()) >= 0) { take(cur); n++; } cur.setDate(cur.getDate() + 1); } }
+    else if (freq === 'MONTHLY' || freq === 'YEARLY') { while (guard++ < 1200 && n < count && cur < weekEnd) { if (untilD && cur > untilD) break; take(cur); n++; if (freq === 'MONTHLY') cur.setMonth(cur.getMonth() + interval); else cur.setFullYear(cur.getFullYear() + interval); } }
+    else { while (guard++ < 6000 && n < count && cur < weekEnd) { if (untilD && cur > untilD) break; take(cur); n++; cur.setDate(cur.getDate() + interval); } }
+    return res;
+  }
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function icsImport(events) {
+    var minC = null, maxC = null;
+    events.forEach(function (ev) {
+      if (!ev.start) return; var w = icsWhen(ev.startP, ev.start); if (!w || w.allDay) return;
+      var t = new Date(w.y, w.m - 1, w.d).getTime(); if (minC === null || t < minC) minC = t; if (maxC === null || t > maxC) maxC = t;
+      if (ev.rrule) { var um = String(ev.rrule).match(/UNTIL=(\d{4})(\d{2})(\d{2})/i); if (um) { var u = new Date(+um[1], +um[2] - 1, +um[3]).getTime(); if (u > maxC) maxC = u; } }
+    });
+    var ws, weekEnd;
+    if (minC !== null) { ws = new Date(minC); weekEnd = new Date(maxC); weekEnd.setDate(weekEnd.getDate() + 1); }
+    else { ws = dateOnly(weekStart); ws.setDate(ws.getDate() - 7); weekEnd = dateOnly(weekStart); weekEnd.setDate(weekEnd.getDate() + 35); }
+    var cap = new Date(ws); cap.setDate(cap.getDate() + 400); if (weekEnd > cap) weekEnd = cap;
+    var meetings = [], series = [], dup = 0;
+    function exists(diso, start, title) { return state.meetings.some(function (m) { return m.dateIso === diso && m.start === start && m.title === title; }) || meetings.some(function (m) { return m.dateIso === diso && m.start === start && m.title === title; }); }
+    events.forEach(function (ev) {
+      if (!ev.start) return; var s = icsWhen(ev.startP, ev.start); if (!s || s.allDay) return;
+      var startMin = s.hh * 60 + s.mm, durMin;
+      var e = ev.end ? icsWhen(ev.endP, ev.end) : null;
+      if (e && !e.allDay) durMin = Math.round((new Date(e.y, e.m - 1, e.d, e.hh, e.mm) - new Date(s.y, s.m - 1, s.d, s.hh, s.mm)) / 60000);
+      else if (ev.duration) durMin = icsDurationMin(ev.duration); else durMin = 30;
+      if (!(durMin > 0)) durMin = 30; if (durMin >= 1440) durMin = 1439;
+      var title = icsUnescape(ev.summary) || 'Meeting', startDate = new Date(s.y, s.m - 1, s.d);
+      var dates = ev.rrule ? expandRRULE(ev.rrule, startDate, ws, weekEnd, ev.exdate) : (startDate >= ws && startDate < weekEnd ? [dateOnly(startDate)] : []);
+      if (!dates.length) return;
+      var sid = null;
+      if (ev.rrule) { sid = 's' + uid(); series.push({ id: sid, title: title, cadence: /FREQ=DAILY/i.test(ev.rrule) ? 'daily' : 'weekly', color: COLORS[(state.series.length + series.length) % COLORS.length] }); }
+      dates.forEach(function (d) {
+        var diso = iso(d);
+        if (exists(diso, startMin, title)) { dup++; return; }
+        meetings.push({ id: 'm' + uid(), seriesId: sid, title: title, dateIso: diso, start: startMin, dur: durMin, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false });
+      });
+    });
+    // Drop series that ended up with no new (non-duplicate) instances.
+    var used = {}; meetings.forEach(function (m) { if (m.seriesId) used[m.seriesId] = 1; });
+    series = series.filter(function (s) { return used[s.id]; });
+    return { meetings: meetings, series: series, dup: dup };
+  }
+  document.getElementById('icsBtn').onclick = function () { document.getElementById('icsFile').click(); };
+  document.getElementById('icsFile').onchange = function () {
+    var file = this.files && this.files[0]; this.value = ''; if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var r; try { r = icsImport(parseICS(reader.result)); } catch (e) { footFlash('Could not read that .ics file.', true); return; }
+      if (!r.meetings.length) { footFlash(r.dup ? 'All ' + r.dup + ' meetings are already on your schedule.' : 'No timed meetings found in that file.', true); return; }
+      if (!confirm('Import ' + r.meetings.length + ' meeting' + (r.meetings.length > 1 ? 's' : '') + (r.dup ? ' (' + r.dup + ' already on your schedule, skipped)' : '') + '?')) return;
+      r.series.forEach(function (s) { state.series.push(s); });
+      r.meetings.forEach(function (m) { state.meetings.push(m); });
+      save(); footFlash('Imported ' + r.meetings.length + ' meeting' + (r.meetings.length > 1 ? 's' : '') + '.'); render();
+    };
+    reader.readAsText(file);
+  };
 
   // ---------- view routing ----------
   function setView(v) {
