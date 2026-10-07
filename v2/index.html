@@ -208,6 +208,14 @@
   .fld-row { display: flex; gap: 10px; } .fld-row .fld { flex: 1; }
   .sheet-btns { display: flex; gap: 10px; margin-top: 8px; }
   .sheet-btns .btn { flex: 1; justify-content: center; min-height: 44px; }
+  .chkline { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--ink-2); font-weight: 500; text-transform: none; letter-spacing: 0; margin: -2px 0 14px; cursor: pointer; }
+  .chkline input { width: auto; min-height: 0; accent-color: var(--accent); }
+  .edit-del { margin: 0 0 14px; }
+  .del-choices { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+  .linkbtn.danger { color: var(--now); }
+  .btn.danger { background: var(--now); color: #fff; }
+  .btn.danger:hover { filter: brightness(1.06); }
+  .btn.sm { min-height: 32px; padding: 0 11px; font-size: 12.5px; }
 
   .foot { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
   .foot b { color: var(--ink-2); } .reset { float: right; }
@@ -246,7 +254,7 @@
 <!-- Add meeting sheet -->
 <div class="overlay" id="addOverlay">
   <div class="sheet">
-    <h3>Add a meeting</h3>
+    <h3 id="sheetTitle">Add a meeting</h3>
     <div class="fld">
       <label>What is it?</label>
       <input type="text" id="fTitle" placeholder="e.g. 1:1 with Sam" maxlength="80">
@@ -259,11 +267,20 @@
       <div class="fld"><label>Length</label>
         <select id="fDur"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">1 hour</option><option value="90">1.5 hours</option></select>
       </div>
-      <div class="fld"><label>Repeat</label>
+      <div class="fld" id="repeatFld"><label>Repeat</label>
         <select id="fRepeat"><option value="none">Doesn't repeat</option><option value="weekly" selected>Weekly</option><option value="daily">Every weekday</option></select>
       </div>
     </div>
     <p class="hint" id="repeatHint"></p>
+    <label class="chkline" id="scopeRow" hidden><input type="checkbox" id="fScope"><span id="scopeText"></span></label>
+    <div class="edit-del" id="delWrap" hidden>
+      <button class="linkbtn danger" id="delStart">Delete…</button>
+      <span class="del-choices" id="delChoices" hidden>Delete
+        <button class="btn danger sm" id="delOne">this meeting</button>
+        <button class="btn danger sm" id="delSeries">entire series</button>
+        <button class="linkbtn" id="delCancel">keep it</button>
+      </span>
+    </div>
     <div class="err" id="addErr" style="display:none"></div>
     <div class="sheet-btns">
       <button class="btn ghost" id="addCancel">Cancel</button>
@@ -290,6 +307,7 @@
   }
   function fmtDur(min) { if (min % 60 === 0) return (min / 60) + 'h'; if (min < 60) return min + 'm'; return Math.floor(min / 60) + 'h' + (min % 60); }
   function timeToMin(v) { var m = /^(\d{1,2}):(\d{2})$/.exec(v || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+  function minToTime(min) { return String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0'); }
   function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 
   // ---------- sample content ----------
@@ -563,6 +581,10 @@
       adv.onclick = function () { m.forceDistill = true; m.expanded = true; save(); render(); };
       if (m.forceDistill) { d.appendChild(document.createElement('div')); appendDistill(d, m); } else d.appendChild(adv);
     }
+    var editRow = el('div'); editRow.style.marginTop = '14px'; editRow.style.textAlign = 'right';
+    var editLink = el('button', 'linkbtn', 'Edit meeting'); editLink.style.color = 'var(--ink-3)'; editLink.style.textDecoration = 'none';
+    editLink.onclick = function (ev) { ev.stopPropagation(); openEdit(m); };
+    editRow.appendChild(editLink); d.appendChild(editRow);
     return d;
   }
 
@@ -626,39 +648,68 @@
   document.getElementById('nextDay').onclick = function () { viewed = iso(addDays(parseIso(viewed), 1)); render(); };
   document.getElementById('todayBtn').onclick = function () { viewed = todayIso(); render(); };
 
-  // ---------- add meeting ----------
+  // ---------- add / edit meeting ----------
   var addOverlay = document.getElementById('addOverlay');
+  var editingId = null;
+  function $(id) { return document.getElementById(id); }
+
   function openAdd() {
-    document.getElementById('fTitle').value = '';
-    document.getElementById('fDate').value = viewed;
-    document.getElementById('fStart').value = '09:00';
-    document.getElementById('fDur').value = '30';
-    document.getElementById('fRepeat').value = 'weekly';
-    document.getElementById('addErr').style.display = 'none';
+    editingId = null;
+    $('sheetTitle').textContent = 'Add a meeting';
+    $('fTitle').value = ''; $('fDate').value = viewed; $('fStart').value = '09:00'; $('fDur').value = '30'; $('fRepeat').value = 'weekly';
+    $('repeatFld').hidden = false; $('repeatHint').hidden = false;
+    $('scopeRow').hidden = true; $('delWrap').hidden = true;
+    $('addErr').style.display = 'none'; $('addSave').textContent = 'Add';
     updateRepeatHint();
     addOverlay.classList.add('open');
-    setTimeout(function () { document.getElementById('fTitle').focus(); }, 50);
+    setTimeout(function () { $('fTitle').focus(); }, 50);
+  }
+  function openEdit(m) {
+    editingId = m.id;
+    $('sheetTitle').textContent = 'Edit meeting';
+    $('fTitle').value = m.title; $('fDate').value = m.dateIso; $('fStart').value = minToTime(m.start); $('fDur').value = String(m.dur);
+    $('repeatFld').hidden = true; $('repeatHint').hidden = true;
+    var s = seriesById(m.seriesId);
+    if (s) { $('scopeRow').hidden = false; $('fScope').checked = false; $('scopeText').textContent = 'Apply the name & time to the whole “' + s.title + '” series'; $('delSeries').hidden = false; }
+    else { $('scopeRow').hidden = true; $('delSeries').hidden = true; }
+    $('delWrap').hidden = false; $('delChoices').hidden = true; $('delStart').hidden = false;
+    $('addErr').style.display = 'none'; $('addSave').textContent = 'Save';
+    addOverlay.classList.add('open');
+    setTimeout(function () { $('fTitle').focus(); }, 50);
   }
   function updateRepeatHint() {
-    var r = document.getElementById('fRepeat').value;
-    document.getElementById('repeatHint').textContent = r === 'none' ? 'A single meeting.' :
+    var r = $('fRepeat').value;
+    $('repeatHint').textContent = r === 'none' ? 'A single meeting.' :
       r === 'weekly' ? 'Creates a weekly thread — the next 8 weeks are added, each able to carry forward.' :
         'Creates a weekday thread — the next 10 weekdays are added.';
   }
-  document.getElementById('fRepeat').onchange = updateRepeatHint;
-  document.getElementById('addBtn').onclick = openAdd;
-  document.getElementById('addCancel').onclick = function () { addOverlay.classList.remove('open'); };
+  $('fRepeat').onchange = updateRepeatHint;
+  $('addBtn').onclick = openAdd;
+  $('addCancel').onclick = function () { addOverlay.classList.remove('open'); };
   addOverlay.onclick = function (e) { if (e.target === addOverlay) addOverlay.classList.remove('open'); };
-  document.getElementById('addSave').onclick = function () {
-    var title = document.getElementById('fTitle').value.trim();
-    var err = document.getElementById('addErr');
+
+  $('addSave').onclick = function () {
+    var title = $('fTitle').value.trim(), err = $('addErr');
     if (!title) { err.style.display = ''; err.textContent = 'Give the meeting a name.'; return; }
-    var start = timeToMin(document.getElementById('fStart').value);
+    var start = timeToMin($('fStart').value);
     if (start == null) { err.style.display = ''; err.textContent = 'Pick a start time.'; return; }
-    var dur = +document.getElementById('fDur').value;
-    var repeat = document.getElementById('fRepeat').value;
-    var date = document.getElementById('fDate').value || viewed;
-    var seriesId = null;
+    var dur = +$('fDur').value, date = $('fDate').value || viewed;
+
+    if (editingId) {
+      var m = state.meetings.filter(function (x) { return x.id === editingId; })[0];
+      if (!m) { addOverlay.classList.remove('open'); return; }
+      if (m.seriesId && $('fScope').checked) {
+        // Apply name + time + length across the series (each instance keeps its date).
+        state.meetings.forEach(function (x) { if (x.seriesId === m.seriesId) { x.title = title; x.start = start; x.dur = dur; } });
+        var s = seriesById(m.seriesId); if (s) s.title = title;
+        m.dateIso = date; // the one you edited can still move day
+      } else {
+        m.title = title; m.start = start; m.dur = dur; m.dateIso = date;
+      }
+      save(); addOverlay.classList.remove('open'); viewed = date; render(); return;
+    }
+
+    var repeat = $('fRepeat').value, seriesId = null;
     if (repeat !== 'none') {
       seriesId = 's' + Date.now().toString(36);
       state.series.push({ id: seriesId, title: title, cadence: repeat === 'daily' ? 'daily' : 'weekly', color: COLORS[state.series.length % COLORS.length] });
@@ -671,6 +722,23 @@
       state.meetings.push({ id: 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), seriesId: seriesId, title: title, dateIso: dt, start: start, dur: dur, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false });
     });
     save(); addOverlay.classList.remove('open'); viewed = date; render();
+  };
+
+  // delete flow
+  $('delStart').onclick = function () { $('delStart').hidden = true; $('delChoices').hidden = false; };
+  $('delCancel').onclick = function () { $('delChoices').hidden = true; $('delStart').hidden = false; };
+  $('delOne').onclick = function () {
+    state.meetings = state.meetings.filter(function (x) { return x.id !== editingId; });
+    save(); addOverlay.classList.remove('open'); render();
+  };
+  $('delSeries').onclick = function () {
+    var m = state.meetings.filter(function (x) { return x.id === editingId; })[0];
+    if (m && m.seriesId) {
+      var sid = m.seriesId;
+      state.meetings = state.meetings.filter(function (x) { return x.seriesId !== sid; });
+      state.series = state.series.filter(function (s) { return s.id !== sid; });
+    }
+    save(); addOverlay.classList.remove('open'); render();
   };
 
   document.getElementById('resetBtn').onclick = function () { if (confirm('Reset the demo to its starting state?')) { state = seed(); viewed = todayIso(); save(); render(); } };
