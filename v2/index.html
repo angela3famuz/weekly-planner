@@ -260,6 +260,20 @@
   .cdel:hover { color: var(--now); }
   .empty-list { font-size: 13px; color: var(--ink-3); padding: 2px 0 2px; }
 
+  /* ---- Habit tracker ---- */
+  .hrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line-2); }
+  .hrow.head { border-top: none; padding-bottom: 2px; }
+  .hname { flex: 1; min-width: 0; border: none; background: transparent; color: var(--ink); font: 14px inherit; outline: none; padding: 4px 0; }
+  .hname:focus { color: var(--accent-ink); }
+  .hcells { display: flex; gap: 4px; flex: none; }
+  .hcell { width: 27px; height: 27px; border-radius: 7px; background: var(--line-2); cursor: pointer; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: var(--ink-3); border: none; }
+  .hcell.on { background: var(--accent); color: #fff; }
+  .hcell.today { box-shadow: inset 0 0 0 2px var(--accent-ink); }
+  .hhc { width: 27px; text-align: center; font-size: 10px; font-weight: 800; letter-spacing: .02em; color: var(--ink-3); }
+  .hhc.today { color: var(--accent-ink); }
+  .hdel { flex: none; border: none; background: none; color: var(--ink-3); cursor: pointer; font-size: 13px; width: 24px; }
+  .hdel:hover { color: var(--now); }
+
   /* ---- Schedule grid ---- */
   .sched-hint { font-size: 12px; color: var(--ink-3); margin: 0 2px 10px; }
   .sched-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); box-shadow: var(--sh); }
@@ -369,6 +383,17 @@
       <div id="todos"></div>
       <div class="add-line"><input id="todoAdd" placeholder="Add a to-do" maxlength="120"><button class="add-plus" id="todoAddBtn" aria-label="Add to-do">＋</button></div>
     </section>
+
+    <section class="pcard">
+      <div class="pcard-k">Habit tracker</div>
+      <div id="habits"></div>
+      <div class="add-line"><input id="habitAdd" placeholder="Add a habit" maxlength="40"><button class="add-plus" id="habitAddBtn" aria-label="Add habit">＋</button></div>
+    </section>
+
+    <section class="pcard">
+      <div class="pcard-k">Notes</div>
+      <textarea id="notes" class="focus-ta" rows="1" placeholder="Anything else on your mind…"></textarea>
+    </section>
   </div>
 
   <!-- ===================== SCHEDULE (week grid) ===================== -->
@@ -465,8 +490,11 @@
   function autoGrow(t) { t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }
   // Per-week planner data (focus / priorities / to-dos), keyed by the week's Monday.
   function wkKey(ws) { return 'thread-wk-' + iso(ws); }
-  function loadWeek(ws) { try { var w = JSON.parse(localStorage.getItem(wkKey(ws))); if (w) { w.focus = w.focus || ''; w.priorities = w.priorities || []; w.todos = w.todos || []; return w; } } catch (e) {} return { focus: '', priorities: [], todos: [] }; }
+  function loadWeek(ws) { try { var w = JSON.parse(localStorage.getItem(wkKey(ws))); if (w) { w.focus = w.focus || ''; w.notes = w.notes || ''; w.priorities = w.priorities || []; w.todos = w.todos || []; w.habitChecks = w.habitChecks || {}; return w; } } catch (e) {} return { focus: '', notes: '', priorities: [], todos: [], habitChecks: {} }; }
   function saveWeek(ws, w) { try { localStorage.setItem(wkKey(ws), JSON.stringify(w)); } catch (e) {} }
+  // Habit names are global; their per-week checkmarks live in the week object.
+  function getHabits() { try { var h = JSON.parse(localStorage.getItem('thread-habits')); if (Array.isArray(h)) return h; } catch (e) {} return []; }
+  function saveHabits(h) { try { localStorage.setItem('thread-habits', JSON.stringify(h)); } catch (e) {} }
   var view = 'today';
   var weekStart = mondayOf(new Date());
   var wk = loadWeek(weekStart);
@@ -622,7 +650,48 @@
     var f = document.getElementById('focus'); f.value = wk.focus || ''; autoGrow(f);
     renderChecklist(document.getElementById('priorities'), wk.priorities, 'No priorities set for this week.');
     renderChecklist(document.getElementById('todos'), wk.todos, 'Nothing on the list yet.');
+    renderHabits();
+    var nt = document.getElementById('notes'); nt.value = wk.notes || ''; autoGrow(nt);
   }
+  function renderHabits() {
+    var wrap = document.getElementById('habits'); wrap.innerHTML = '';
+    var habits = getHabits(), td = todayIso();
+    var dows = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    var todayIdx = -1; for (var i = 0; i < 7; i++) if (iso(addDays(weekStart, i)) === td) todayIdx = i;
+    // header row
+    var head = el('div', 'hrow head'); head.appendChild(el('div', 'hname', ''));
+    var hc = el('div', 'hcells'); dows.forEach(function (d, di) { hc.appendChild(el('div', 'hhc' + (di === todayIdx ? ' today' : ''), d)); }); head.appendChild(hc);
+    head.appendChild(el('div', 'hdel', ''));
+    wrap.appendChild(head);
+    if (!habits.length) { wrap.appendChild(el('div', 'empty-list', 'No habits yet — add one to start tracking.')); return; }
+    habits.forEach(function (habit, hi) {
+      var row = el('div', 'hrow');
+      var name = document.createElement('input'); name.className = 'hname'; name.value = habit.name;
+      name.oninput = function () { habit.name = name.value; saveHabits(habits); };
+      row.appendChild(name);
+      var cells = el('div', 'hcells');
+      var checks = wk.habitChecks[habit.id] || (wk.habitChecks[habit.id] = [false, false, false, false, false, false, false]);
+      for (var di = 0; di < 7; di++) {
+        (function (d) {
+          var cell = el('button', 'hcell' + (checks[d] ? ' on' : '') + (d === todayIdx ? ' today' : ''), checks[d] ? '✓' : '');
+          cell.onclick = function () { checks[d] = !checks[d]; saveWeek(weekStart, wk); renderHabits(); };
+          cells.appendChild(cell);
+        })(di);
+      }
+      row.appendChild(cells);
+      var del = el('button', 'hdel', '✕'); del.setAttribute('aria-label', 'Delete habit');
+      del.onclick = function () { habits.splice(hi, 1); saveHabits(habits); renderHabits(); };
+      row.appendChild(del);
+      wrap.appendChild(row);
+    });
+  }
+  document.getElementById('habitAddBtn').onclick = function () {
+    var inp = document.getElementById('habitAdd'), t = inp.value.trim(); if (!t) return;
+    var habits = getHabits(); habits.push({ id: 'h' + Date.now().toString(36), name: t }); saveHabits(habits);
+    inp.value = ''; renderHabits(); inp.focus();
+  };
+  document.getElementById('habitAdd').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('habitAddBtn').click(); } };
+  document.getElementById('notes').addEventListener('input', function (e) { wk.notes = e.target.value; autoGrow(e.target); saveWeek(weekStart, wk); });
   function renderChecklist(container, items, emptyMsg) {
     container.innerHTML = '';
     if (!items.length) { container.appendChild(el('div', 'empty-list', emptyMsg)); return; }
