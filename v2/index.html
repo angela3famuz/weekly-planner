@@ -548,12 +548,16 @@
         <select id="fDur"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">1 hour</option><option value="90">1.5 hours</option></select>
       </div>
       <div class="fld" id="repeatFld"><label>Repeat</label>
-        <select id="fRepeat"><option value="none">Doesn't repeat</option><option value="daily">Daily</option><option value="weekly" selected>Weekly</option><option value="weekday">Every weekday</option></select>
+        <select id="fRepeat"><option value="none">Doesn't repeat</option><option value="daily">Daily</option><option value="weekly" selected>Weekly</option><option value="weekday">Every weekday</option><option value="monthly">Monthly</option></select>
       </div>
     </div>
     <div class="fld" id="intervalFld" hidden>
       <label>Repeat every</label>
       <div class="interval-row"><input type="number" id="fInterval" min="1" max="12" step="1" value="1"><span id="intervalUnit">week(s)</span></div>
+    </div>
+    <div class="fld" id="monthFld" hidden>
+      <label>Monthly on</label>
+      <select id="fMonthMode"></select>
     </div>
     <p class="hint" id="repeatHint"></p>
     <label class="chkline" id="scopeRow" hidden><input type="checkbox" id="fScope"><span id="scopeText"></span></label>
@@ -802,15 +806,34 @@
   }
   // Dates for a recurring series starting at startIso. includeStart=false yields only the
   // occurrences after it (for converting an existing meeting, whose own date already exists).
-  function genSeriesDates(startIso, cadence, interval, includeStart) {
+  // The date of the nth (1-4) or 'last' <weekday> of a given month.
+  function nthWeekdayDate(y, mo, weekday, nth) {
+    if (nth === 'last') {
+      var lastDay = new Date(y, mo + 1, 0).getDate(), d = new Date(y, mo, lastDay);
+      return new Date(y, mo, lastDay - ((d.getDay() - weekday + 7) % 7));
+    }
+    var first = new Date(y, mo, 1), offset = (weekday - first.getDay() + 7) % 7;
+    return new Date(y, mo, 1 + offset + (nth - 1) * 7);
+  }
+  function genSeriesDates(startIso, cadence, interval, includeStart, monthMode) {
     var n = Math.max(1, interval || 1), dates = [];
     if (cadence === 'weekday') {
       var d = includeStart ? parseIso(startIso) : addDays(parseIso(startIso), 1), need = includeStart ? 10 : 9;
       while (dates.length < need) { var dow = d.getDay(); if (dow !== 0 && dow !== 6) dates.push(iso(d)); d = addDays(d, 1); }
-    } else {
-      var step = cadence === 'weekly' ? 7 * n : n, cnt = cadence === 'weekly' ? 8 : 10;
-      for (var i = includeStart ? 0 : 1; i < cnt; i++) dates.push(iso(addDays(parseIso(startIso), i * step)));
+      return dates;
     }
+    if (cadence === 'monthly') {
+      var sd = parseIso(startIso), day = sd.getDate(), wd = sd.getDay(), nth = Math.floor((day - 1) / 7) + 1;
+      var which = (day + 7 > new Date(sd.getFullYear(), sd.getMonth() + 1, 0).getDate()) ? 'last' : nth;
+      for (var i = 0; i < 12; i++) {
+        var mo = sd.getMonth() + i * n, y = sd.getFullYear();
+        var t = (monthMode === 'day') ? new Date(y, mo, Math.min(day, new Date(y, mo + 1, 0).getDate())) : nthWeekdayDate(y, mo, wd, which);
+        dates.push(iso(t));
+      }
+      return includeStart ? dates : dates.slice(1);
+    }
+    var step = cadence === 'weekly' ? 7 * n : n, cnt = cadence === 'weekly' ? 8 : 10;
+    for (var j = includeStart ? 0 : 1; j < cnt; j++) dates.push(iso(addDays(parseIso(startIso), j * step)));
     return dates;
   }
 
@@ -1830,11 +1853,26 @@
     addOverlay.classList.add('open');
     setTimeout(function () { $('fTitle').focus(); }, 50);
   }
+  // Build the "Monthly on …" options from the chosen date (nth weekday vs day-of-month).
+  function populateMonthMode() {
+    var sel = $('fMonthMode'), prev = sel.value, dv = $('fDate').value; if (!dv) return;
+    var d = parseIso(dv), day = d.getDate(), wd = d.getDay(), nth = Math.floor((day - 1) / 7) + 1;
+    var isLast = (day + 7 > new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate());
+    var wdNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    var ord = ['', 'first', 'second', 'third', 'fourth', 'fifth'];
+    var weekdayLabel = (isLast ? 'the last ' : 'the ' + ord[nth] + ' ') + wdNames[wd];
+    sel.innerHTML = '';
+    var o1 = document.createElement('option'); o1.value = 'weekday'; o1.textContent = weekdayLabel; sel.appendChild(o1);
+    var o2 = document.createElement('option'); o2.value = 'day'; o2.textContent = 'day ' + day; sel.appendChild(o2);
+    if (prev === 'day') sel.value = 'day';
+  }
   function updateRepeatUI() {
     var r = $('fRepeat').value;
-    var repeats = (r === 'weekly' || r === 'daily');
-    $('intervalFld').hidden = !repeats;
-    if (repeats) $('intervalUnit').textContent = r === 'weekly' ? 'week(s)' : 'day(s)';
+    var isInterval = (r === 'weekly' || r === 'daily' || r === 'monthly');
+    $('intervalFld').hidden = !isInterval;
+    if (isInterval) $('intervalUnit').textContent = r === 'weekly' ? 'week(s)' : r === 'daily' ? 'day(s)' : 'month(s)';
+    $('monthFld').hidden = (r !== 'monthly');
+    if (r === 'monthly') populateMonthMode();
     var cur = editingId ? (state.meetings.filter(function (x) { return x.id === editingId; })[0] || {}) : {};
     var converting = editingId && !cur.seriesId; // turning an existing one-off into a series
     var verb = converting ? 'Makes this' : 'Creates';
@@ -1842,6 +1880,12 @@
     if (r === 'none') { $('repeatHint').textContent = converting ? 'Stays a single meeting.' : 'A single meeting.'; return; }
     if (r === 'weekday') { $('repeatHint').textContent = verb + ' a weekday thread — the next ' + (converting ? 9 : 10) + ' weekdays are added' + tail + '.'; return; }
     var n = Math.max(1, parseInt($('fInterval').value, 10) || 1);
+    if (r === 'monthly') {
+      var everyM = n > 1 ? 'every ' + n + ' months' : 'monthly';
+      var patt = $('fMonthMode').selectedOptions[0] ? ' on ' + $('fMonthMode').selectedOptions[0].textContent : '';
+      $('repeatHint').textContent = verb + ' a thread repeating ' + everyM + patt + ' — the next ' + (converting ? 11 : 12) + ' occurrences are added' + tail + ', each able to carry forward.';
+      return;
+    }
     var every = r === 'weekly' ? (n > 1 ? 'every ' + n + ' weeks' : 'weekly') : (n > 1 ? 'every ' + n + ' days' : 'daily');
     var count = converting ? (r === 'weekly' ? 7 : 9) : (r === 'weekly' ? 8 : 10);
     var carry = r === 'weekly' ? ', each able to carry forward' : '';
@@ -1849,6 +1893,8 @@
   }
   $('fRepeat').onchange = updateRepeatUI;
   $('fInterval').oninput = updateRepeatUI;
+  $('fMonthMode').onchange = updateRepeatUI;
+  $('fDate').onchange = function () { if ($('fRepeat').value === 'monthly') updateRepeatUI(); };
   $('addBtn').onclick = openAdd;
   $('addCancel').onclick = function () { addOverlay.classList.remove('open'); };
   addOverlay.onclick = function (e) { if (e.target === addOverlay) addOverlay.classList.remove('open'); };
@@ -1877,10 +1923,12 @@
       var rep = $('repeatFld').hidden ? 'none' : $('fRepeat').value;
       if (!m.seriesId && rep !== 'none') {
         var interval = Math.max(1, Math.min(12, parseInt($('fInterval').value, 10) || 1));
-        var sid = 's' + Date.now().toString(36);
-        state.series.push({ id: sid, title: title, cadence: rep, interval: rep === 'weekday' ? 1 : interval, color: m.color || COLORS[state.series.length % COLORS.length] });
+        var monthMode = $('fMonthMode').value, sid = 's' + Date.now().toString(36);
+        var ser = { id: sid, title: title, cadence: rep, interval: rep === 'weekday' ? 1 : interval, color: m.color || COLORS[state.series.length % COLORS.length] };
+        if (rep === 'monthly') ser.monthMode = monthMode;
+        state.series.push(ser);
         m.seriesId = sid;
-        genSeriesDates(date, rep, interval, false).forEach(function (dt) {
+        genSeriesDates(date, rep, interval, false, monthMode).forEach(function (dt) {
           if (state.meetings.some(function (x) { return x.dateIso === dt && x.start === start && x.title === title; })) return;
           state.meetings.push({ id: 'm' + uid(), seriesId: sid, title: title, dateIso: dt, start: start, dur: dur, color: m.color || null, cat: editCat, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false, status: '' });
         });
@@ -1889,12 +1937,14 @@
     }
 
     clearDemoIfPristine();
-    var repeat = $('fRepeat').value, interval = Math.max(1, Math.min(12, parseInt($('fInterval').value, 10) || 1)), seriesId = null;
+    var repeat = $('fRepeat').value, interval = Math.max(1, Math.min(12, parseInt($('fInterval').value, 10) || 1)), monthMode2 = $('fMonthMode').value, seriesId = null;
     if (repeat !== 'none') {
       seriesId = 's' + Date.now().toString(36);
-      state.series.push({ id: seriesId, title: title, cadence: repeat, interval: repeat === 'weekday' ? 1 : interval, color: COLORS[state.series.length % COLORS.length] });
+      var ser2 = { id: seriesId, title: title, cadence: repeat, interval: repeat === 'weekday' ? 1 : interval, color: COLORS[state.series.length % COLORS.length] };
+      if (repeat === 'monthly') ser2.monthMode = monthMode2;
+      state.series.push(ser2);
     }
-    var dates = repeat === 'none' ? [date] : genSeriesDates(date, repeat, interval, true);
+    var dates = repeat === 'none' ? [date] : genSeriesDates(date, repeat, interval, true, monthMode2);
     dates.forEach(function (dt) {
       state.meetings.push({ id: 'm' + uid(), seriesId: seriesId, title: title, dateIso: dt, start: start, dur: dur, cat: editCat, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false, status: '' });
     });
