@@ -1234,10 +1234,16 @@
     editingId = m.id;
     $('sheetTitle').textContent = 'Edit meeting';
     $('fTitle').value = m.title; $('fDate').value = m.dateIso; $('fStart').value = minToTime(m.start); $('fDur').value = String(m.dur);
-    $('repeatFld').hidden = true; $('repeatHint').hidden = true;
     var s = seriesById(m.seriesId);
-    if (s) { $('scopeRow').hidden = false; $('fScope').checked = false; $('scopeText').textContent = 'Apply the name & time to the whole “' + s.title + '” series'; $('delSeries').hidden = false; }
-    else { $('scopeRow').hidden = true; $('delSeries').hidden = true; }
+    if (s) {
+      // Already recurring: offer scope + delete-series, no repeat control.
+      $('repeatFld').hidden = true; $('repeatHint').hidden = true;
+      $('scopeRow').hidden = false; $('fScope').checked = false; $('scopeText').textContent = 'Apply the name & time to the whole “' + s.title + '” series'; $('delSeries').hidden = false;
+    } else {
+      // One-off: let it be turned into a recurring thread.
+      $('repeatFld').hidden = false; $('repeatHint').hidden = false; $('fRepeat').value = 'none';
+      $('scopeRow').hidden = true; $('delSeries').hidden = true; updateRepeatHint();
+    }
     $('delWrap').hidden = false; $('delChoices').hidden = true; $('delStart').hidden = false;
     $('addErr').style.display = 'none'; $('addSave').textContent = 'Save';
     addOverlay.classList.add('open');
@@ -1245,9 +1251,18 @@
   }
   function updateRepeatHint() {
     var r = $('fRepeat').value;
-    $('repeatHint').textContent = r === 'none' ? 'A single meeting.' :
-      r === 'weekly' ? 'Creates a weekly thread — the next 8 weeks are added, each able to carry forward.' :
-        'Creates a weekday thread — the next 10 weekdays are added.';
+    var cur = editingId ? (state.meetings.filter(function (x) { return x.id === editingId; })[0] || {}) : {};
+    var converting = editingId && !cur.seriesId; // turning an existing one-off into a series
+    if (r === 'none') { $('repeatHint').textContent = converting ? 'Stays a single meeting.' : 'A single meeting.'; return; }
+    if (converting) {
+      $('repeatHint').textContent = r === 'weekly'
+        ? 'Makes this a weekly thread — the next 7 weeks are added from this date, each able to carry forward.'
+        : 'Makes this a weekday thread — the next 9 weekdays are added from this date.';
+    } else {
+      $('repeatHint').textContent = r === 'weekly'
+        ? 'Creates a weekly thread — the next 8 weeks are added, each able to carry forward.'
+        : 'Creates a weekday thread — the next 10 weekdays are added.';
+    }
   }
   $('fRepeat').onchange = updateRepeatHint;
   $('addBtn').onclick = openAdd;
@@ -1271,6 +1286,20 @@
         m.dateIso = date; // the one you edited can still move day
       } else {
         m.title = title; m.start = start; m.dur = dur; m.dateIso = date;
+      }
+      // Turn a one-off into a recurring thread, if asked.
+      var rep = $('repeatFld').hidden ? 'none' : $('fRepeat').value;
+      if (!m.seriesId && rep !== 'none') {
+        var sid = 's' + Date.now().toString(36);
+        state.series.push({ id: sid, title: title, cadence: rep === 'daily' ? 'daily' : 'weekly', color: m.color || COLORS[state.series.length % COLORS.length] });
+        m.seriesId = sid;
+        var dates = [];
+        if (rep === 'weekly') { for (var i = 1; i < 8; i++) dates.push(iso(addDays(parseIso(date), i * 7))); }
+        else { var d = addDays(parseIso(date), 1), added = 0; while (added < 9) { var dow = d.getDay(); if (dow !== 0 && dow !== 6) { dates.push(iso(d)); added++; } d = addDays(d, 1); } }
+        dates.forEach(function (dt) {
+          if (state.meetings.some(function (x) { return x.dateIso === dt && x.start === start && x.title === title; })) return;
+          state.meetings.push({ id: 'm' + uid(), seriesId: sid, title: title, dateIso: dt, start: start, dur: dur, color: m.color || null, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false, status: '' });
+        });
       }
       state.demo = false; save(); addOverlay.classList.remove('open'); viewed = date; render(); return;
     }
