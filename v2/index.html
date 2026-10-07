@@ -561,7 +561,7 @@
   var viewed = todayIso();
 
   function seriesById(id) { for (var i = 0; i < state.series.length; i++) if (state.series[i].id === id) return state.series[i]; return null; }
-  function colorFor(m) { var s = seriesById(m.seriesId); return s ? s.color : '#8a8a96'; }
+  function colorFor(m) { if (m.color) return m.color; var s = seriesById(m.seriesId); return s ? s.color : '#8a8a96'; }
 
   // The thread handed to an upcoming instance: the latest distilled earlier
   // instance of the same series.
@@ -1275,13 +1275,50 @@
     document.body.appendChild(a); a.click(); a.remove();
     footFlash('Backup downloaded.');
   };
+  // Bring a v1 Weekly Planner backup into the merged model (additive).
+  function migrateFromV1(data) {
+    var weeks = data.weeks || {}, mAdded = 0, wAdded = 0;
+    var di = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
+    var dn = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun', next: 'Next week' };
+    Object.keys(weeks).forEach(function (isoKey) {
+      var v1w = weeks[isoKey]; if (!v1w || !/^\d{4}-\d{2}-\d{2}$/.test(isoKey)) return;
+      var ws = parseIso(isoKey), v2w = loadWeek(ws);
+      if (!v2w.focus && v1w.focus) v2w.focus = v1w.focus;
+      if (!v2w.notes && v1w.notes) v2w.notes = v1w.notes;
+      (v1w.priorities || []).forEach(function (it) { if (it && it.text) v2w.priorities.push({ text: it.text, status: it.status || '', carried: it.carried }); });
+      (v1w.todos || []).forEach(function (it) { if (it && it.text) v2w.todos.push({ text: it.text, status: it.status || '', carried: it.carried }); });
+      Object.keys(v1w.days || {}).forEach(function (dk) { (v1w.days[dk] || []).forEach(function (it) { if (it && it.text) v2w.todos.push({ text: it.text + ' (' + (dn[dk] || dk) + ')', status: it.status || '' }); }); });
+      Object.keys(v1w.habitChecks || {}).forEach(function (hid) { v2w.habitChecks[hid] = v1w.habitChecks[hid]; });
+      v2w.carried = true; saveWeek(ws, v2w); wAdded++;
+      (v1w.blocks || []).forEach(function (b) {
+        if (di[b.day] == null || b.start == null) return;
+        var diso = iso(addDays(ws, di[b.day]));
+        var dur = (b.end > b.start ? b.end : 1440) - b.start; if (!(dur > 0)) dur = 30; if (dur >= 1440) dur = 1439;
+        var title = b.text || 'Meeting';
+        if (state.meetings.some(function (m) { return m.dateIso === diso && m.start === b.start && m.title === title; })) return;
+        state.meetings.push({ id: 'm' + uid(), seriesId: null, title: title, dateIso: diso, start: b.start, dur: dur, color: b.color || null, status: b.status || '', transcript: '', thread: null, draftReply: '', showReply: false, expanded: false });
+        mAdded++;
+      });
+    });
+    var v2h = getHabits(), have = {}; v2h.forEach(function (h) { have[h.id] = 1; });
+    (data.habits || []).forEach(function (h) { var hh = typeof h === 'string' ? { id: h, name: h } : { id: String(h.id), name: String(h.name || '') }; if (hh.id && !have[hh.id]) { v2h.push(hh); have[hh.id] = 1; } });
+    saveHabits(v2h); save();
+    return { weeks: wAdded, meetings: mAdded };
+  }
   document.getElementById('restoreBtn').onclick = function () { document.getElementById('restoreFile').click(); };
   document.getElementById('restoreFile').onchange = function () {
     var file = this.files && this.files[0]; this.value = ''; if (!file) return;
     var reader = new FileReader();
     reader.onload = function () {
       var data; try { data = JSON.parse(reader.result); } catch (e) { footFlash('That file is not valid JSON.', true); return; }
-      if (!data || data.app !== 'thread' || !data.meetings) { footFlash('That is not a Thread backup.', true); return; }
+      if (data && data.app === 'weekly-planner') {
+        if (!confirm('Bring your v1 Weekly Planner backup into Thread? Your current Thread data is kept — v1 weeks, schedule blocks and habits are added in.')) return;
+        var r; try { r = migrateFromV1(data); } catch (e) { footFlash('Migration failed.', true); return; }
+        viewed = todayIso(); weekStart = mondayOf(new Date()); wk = loadWeek(weekStart);
+        footFlash('Imported from v1: ' + r.meetings + ' meeting' + (r.meetings === 1 ? '' : 's') + ', ' + r.weeks + ' week' + (r.weeks === 1 ? '' : 's') + '.');
+        render(); return;
+      }
+      if (!data || data.app !== 'thread' || !data.meetings) { footFlash('That is not a Thread or Weekly Planner backup.', true); return; }
       if (!confirm('Restore this backup? It replaces your current meetings, weeks and habits.')) return;
       try {
         state = data.meetings; save();
