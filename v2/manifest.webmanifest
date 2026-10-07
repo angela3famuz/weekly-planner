@@ -1,0 +1,16 @@
+{
+  "name": "Thread — cockpit",
+  "short_name": "Thread",
+  "description": "A present-tense planner. Meetings that remember: distil a transcript and the next one opens knowing where you left off.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#f4f4f3",
+  "background_color": "#f4f4f3",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

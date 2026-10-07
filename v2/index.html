@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Thread — cockpit</title>
+<meta name="description" content="A present-tense planner. Meetings that remember.">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f4f3">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101012">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Thread">
+<link rel="manifest" href="manifest.webmanifest">
+<!-- iOS ignores the manifest icons and only accepts PNG here. -->
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <style>
   /* =========================================================
      Thread — v2 cockpit
@@ -852,6 +862,13 @@
   }
   updateBell();
   render(); tick(); setInterval(tick, 30000);
+
+  // Offline shell + home-screen install. Needs a secure context.
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* offline support is optional */ });
+    });
+  }
 })();
 </script>
 </body>
