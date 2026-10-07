@@ -333,6 +333,9 @@
   .foot b { color: var(--ink-2); }
   .foot-tools { display: block; margin-bottom: 8px; }
   .foot-flash { color: var(--done); font-weight: 700; font-size: 11.5px; }
+  .sync-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 3px; vertical-align: middle; }
+  .codebox { display: flex; align-items: center; gap: 8px; }
+  .codebox code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 12px; background: var(--line-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; color: var(--ink-2); }
 </style>
 </head>
 <body>
@@ -412,6 +415,7 @@
 
   <div class="foot">
     <span class="foot-tools">
+      <button class="linkbtn" id="syncBtn">Sync<span class="sync-dot" id="syncDot" hidden></span></button> ·
       <button class="linkbtn" id="backupBtn">Download backup</button> ·
       <button class="linkbtn" id="restoreBtn">Restore</button> ·
       <button class="linkbtn" id="resetBtn">Reset demo</button>
@@ -469,6 +473,46 @@
   </div>
 </div>
 
+<!-- Sync sheet -->
+<div class="overlay" id="syncOverlay">
+  <div class="sheet">
+    <h3>Sync across devices</h3>
+    <p class="hint" id="syncStatus">Off. Your data stays on this device only.</p>
+
+    <div id="syncSetup">
+      <p class="hint">Thread syncs through a single private <b>GitHub gist</b> — no server to run, and GitHub keeps every version so nothing is lost. Everything still works offline; this just reconciles when you're online.</p>
+      <div class="fld">
+        <label>GitHub token</label>
+        <input type="password" id="syncToken" placeholder="ghp_… (classic token, gist scope)" autocomplete="off" spellcheck="false">
+      </div>
+      <p class="hint" style="margin-top:-4px">Create one at <b>github.com → Settings → Developer settings → Personal access tokens</b>. A <b>classic</b> token with only the <b>gist</b> scope ticked — it can touch your gists and nothing else. Stored on this device only.</p>
+      <div class="fld">
+        <label>Passphrase <span style="font-weight:400;opacity:.7">— optional, encrypts your data so GitHub can't read it</span></label>
+        <input type="password" id="syncPass" placeholder="a few words you'll remember" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="fld">
+        <label>Sync code <span style="font-weight:400;opacity:.7">— leave blank on your first device</span></label>
+        <input type="text" id="syncCodeIn" placeholder="paste the code from your first device" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="err" id="syncErr" style="display:none"></div>
+    </div>
+
+    <div id="syncOn" hidden>
+      <div class="fld">
+        <label>Sync code <span style="font-weight:400;opacity:.7">— enter this on your other devices</span></label>
+        <div class="codebox"><code id="syncCodeOut"></code><button class="btn sm" id="syncCopy">Copy</button></div>
+      </div>
+      <p class="hint" id="syncOnNote"></p>
+    </div>
+
+    <div class="sheet-btns">
+      <button class="btn ghost" id="syncClose">Close</button>
+      <button class="btn danger sm" id="syncOff" hidden>Disconnect</button>
+      <button class="btn primary" id="syncGo">Turn on sync</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   "use strict";
@@ -499,10 +543,10 @@
   // Per-week planner data (focus / priorities / to-dos), keyed by the week's Monday.
   function wkKey(ws) { return 'thread-wk-' + iso(ws); }
   function loadWeek(ws) { try { var w = JSON.parse(localStorage.getItem(wkKey(ws))); if (w) { w.focus = w.focus || ''; w.notes = w.notes || ''; w.priorities = w.priorities || []; w.todos = w.todos || []; w.habitChecks = w.habitChecks || {}; return w; } } catch (e) {} return { focus: '', notes: '', priorities: [], todos: [], habitChecks: {} }; }
-  function saveWeek(ws, w) { try { localStorage.setItem(wkKey(ws), JSON.stringify(w)); } catch (e) {} }
+  function saveWeek(ws, w) { try { localStorage.setItem(wkKey(ws), JSON.stringify(w)); } catch (e) {} scheduleSync(); }
   // Habit names are global; their per-week checkmarks live in the week object.
   function getHabits() { try { var h = JSON.parse(localStorage.getItem('thread-habits')); if (Array.isArray(h)) return h; } catch (e) {} return []; }
-  function saveHabits(h) { try { localStorage.setItem('thread-habits', JSON.stringify(h)); } catch (e) {} }
+  function saveHabits(h) { try { localStorage.setItem('thread-habits', JSON.stringify(h)); } catch (e) {} scheduleSync(); }
   var view = 'today';
   var weekStart = mondayOf(new Date());
   var wk = loadWeek(weekStart);
@@ -559,7 +603,7 @@
   // The seeded sample data clears itself the moment you bring in real data.
   function clearDemoIfPristine() { if (state.demo) { state.series = []; state.meetings = []; state.demo = false; } }
   function load() { try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.meetings) return s; } catch (e) {} return seed(); }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} scheduleSync(); }
   var state = load();
   var viewed = todayIso();
 
@@ -1338,6 +1382,248 @@
     reader.readAsText(file);
   };
 
+  // ---------- sync across devices (one private GitHub gist, 3-way merged) ----------
+  // No server: the whole app state lives in one secret gist. Each sync reads the gist,
+  // 3-way merges it against the last-synced snapshot ("base"), writes the result back,
+  // and updates the base. Because the base records what both sides last agreed on, an
+  // add, a delete and an edit are all distinguishable per entity (per meeting, per week,
+  // per habit) — not whole-blob last-write-wins. A true both-sides edit of the same item
+  // is the only conflict; this device wins it and says so. The device stays the source of
+  // truth; everything works offline and reconciles on reconnect.
+  var cfg = loadCfg();
+  var applyingRemote = false, syncing = false, pendingSync = false, syncT = null, backoff = 0, backoffT = null;
+  function loadCfg() { try { var c = JSON.parse(localStorage.getItem('thread-sync')); if (c && typeof c === 'object') return c; } catch (e) {} return { on: false, token: '', gistId: '', pass: '', lastSync: 0, lastError: '' }; }
+  function saveCfg() { try { localStorage.setItem('thread-sync', JSON.stringify(cfg)); } catch (e) {} }
+
+  // --- stable compare (key order never matters) ---
+  function stable(o) {
+    if (o === null || typeof o !== 'object') return JSON.stringify(o);
+    if (Array.isArray(o)) return '[' + o.map(stable).join(',') + ']';
+    return '{' + Object.keys(o).sort().map(function (k) { return JSON.stringify(k) + ':' + stable(o[k]); }).join(',') + '}';
+  }
+  // UI-only fields never travel; draft replies and content do.
+  function cleanMeeting(m) { var o = {}; for (var k in m) { if (k === 'expanded' || k === 'showReply') continue; o[k] = m[k]; } return o; }
+  function restoreMeeting(m, local) { var o = {}; for (var k in m) o[k] = m[k]; o.expanded = local ? !!local.expanded : false; o.showReply = local ? !!local.showReply : false; if (o.draftReply == null) o.draftReply = ''; return o; }
+
+  // --- the whole app, as comparable maps ---
+  function collectWeeks() { var w = {}; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('thread-wk-') === 0) { try { w[k] = JSON.parse(localStorage.getItem(k)); } catch (e) {} } } return w; }
+  function snapshot() {
+    var meetings = {}, series = {};
+    if (!state.demo) { state.meetings.forEach(function (m) { meetings[m.id] = cleanMeeting(m); }); state.series.forEach(function (s) { series[s.id] = s; }); }
+    var habits = {}; getHabits().forEach(function (h) { if (h && h.id) habits[h.id] = h; });
+    var notify = '0'; try { notify = localStorage.getItem('thread-notify') || '0'; } catch (e) {}
+    return { meetings: meetings, series: series, weeks: collectWeeks(), habits: habits, notify: notify };
+  }
+
+  // --- 3-way merge of a keyed collection ---
+  function mergeMaps(b, l, r, conflicts, label) {
+    b = b || {}; l = l || {}; r = r || {};
+    var keys = {}, out = {};
+    [b, l, r].forEach(function (m) { Object.keys(m).forEach(function (k) { keys[k] = 1; }); });
+    Object.keys(keys).forEach(function (k) {
+      var hb = k in b, hl = k in l, hr = k in r;
+      var sb = hb ? stable(b[k]) : null, sl = hl ? stable(l[k]) : null, sr = hr ? stable(r[k]) : null;
+      if (hl && hr) {
+        if (sl === sr) out[k] = l[k];
+        else if (sl === sb) out[k] = r[k];       // only remote changed
+        else if (sr === sb) out[k] = l[k];       // only local changed
+        else { out[k] = l[k]; conflicts.push(label); } // both changed → keep local, flag
+      } else if (hl && !hr) {
+        if (hb && sb === sl) { /* remote deleted, local untouched → drop */ }
+        else { out[k] = l[k]; if (hb) conflicts.push(label); } // added locally, or kept over a remote delete
+      } else if (!hl && hr) {
+        if (hb && sb === sr) { /* local deleted, remote untouched → drop */ }
+        else { out[k] = r[k]; if (hb) conflicts.push(label); } // added remotely, or kept over a local delete
+      }
+    });
+    return out;
+  }
+  function merge1(b, l, r) { if (l === r) return l; if (l === b) return r; if (r === b) return l; return l; }
+  function mergeDocs(base, local, remote, conflicts) {
+    return {
+      meetings: mergeMaps(base.meetings, local.meetings, remote.meetings, conflicts, 'a meeting'),
+      series: mergeMaps(base.series, local.series, remote.series, conflicts, 'a series'),
+      weeks: mergeMaps(base.weeks, local.weeks, remote.weeks, conflicts, 'a week'),
+      habits: mergeMaps(base.habits, local.habits, remote.habits, conflicts, 'a habit'),
+      notify: merge1(base.notify, local.notify, remote.notify)
+    };
+  }
+  function loadBase() { try { return JSON.parse(localStorage.getItem('thread-sync-base')) || {}; } catch (e) { return {}; } }
+  function saveBase(m) { try { localStorage.setItem('thread-sync-base', JSON.stringify(m)); } catch (e) {} }
+
+  // --- write a merged snapshot back into localStorage (without re-triggering sync) ---
+  function applyLocal(merged) {
+    applyingRemote = true;
+    try {
+      // Leave the demo samples alone until real cockpit data actually exists to apply.
+      var hasReal = Object.keys(merged.meetings).length || Object.keys(merged.series).length;
+      if (hasReal || !state.demo) {
+        var localById = {}; state.meetings.forEach(function (m) { localById[m.id] = m; });
+        var meetings = Object.keys(merged.meetings).map(function (k) { return restoreMeeting(merged.meetings[k], localById[k]); });
+        meetings.sort(function (a, b) { return a.dateIso < b.dateIso ? -1 : a.dateIso > b.dateIso ? 1 : (a.start - b.start); });
+        state.meetings = meetings;
+        state.series = Object.keys(merged.series).map(function (k) { return merged.series[k]; });
+        if (hasReal) state.demo = false;
+      }
+      localStorage.setItem(KEY, JSON.stringify(state));
+      var want = merged.weeks || {}, existing = [];
+      for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('thread-wk-') === 0) existing.push(k); }
+      existing.forEach(function (k) { if (!(k in want)) localStorage.removeItem(k); });
+      Object.keys(want).forEach(function (k) { localStorage.setItem(k, JSON.stringify(want[k])); });
+      localStorage.setItem('thread-habits', JSON.stringify(Object.keys(merged.habits).map(function (k) { return merged.habits[k]; })));
+      if (merged.notify != null) localStorage.setItem('thread-notify', merged.notify);
+    } finally { applyingRemote = false; }
+    wk = loadWeek(weekStart);
+    try { notifyOn = localStorage.getItem('thread-notify') === '1'; } catch (e) {}
+    render(); try { updateBell(); } catch (e) {}
+  }
+
+  // --- GitHub gist transport ---
+  var GH = 'https://api.github.com';
+  function ghHeaders() { return { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' }; }
+  function ghErr(s) { if (s === 401) return 'token rejected — check it has the gist scope'; if (s === 403) return 'GitHub says forbidden or rate-limited'; if (s === 422) return 'GitHub rejected the data'; return 'GitHub error ' + s; }
+  function ghPull() {
+    if (!cfg.gistId) return Promise.resolve({});
+    return fetch(GH + '/gists/' + cfg.gistId, { headers: ghHeaders() }).then(function (res) {
+      if (res.status === 404) { cfg.gistId = ''; saveCfg(); return {}; }
+      if (!res.ok) throw new Error(ghErr(res.status));
+      return res.json().then(function (j) {
+        var f = j.files && j.files['thread-sync.json'];
+        if (!f) return {};
+        if (f.truncated && f.raw_url) return fetch(f.raw_url).then(function (r) { return r.text(); }).then(parseDoc);
+        return f.content ? parseDoc(f.content) : {};
+      });
+    });
+  }
+  function ghPush(merged) {
+    return serializeDoc(merged).then(function (content) {
+      var files = { files: { 'thread-sync.json': { content: content } } };
+      if (!cfg.gistId) {
+        var body = { description: 'Thread sync — do not edit by hand', public: false, files: files.files };
+        return fetch(GH + '/gists', { method: 'POST', headers: ghHeaders(), body: JSON.stringify(body) }).then(function (res) {
+          if (!res.ok) throw new Error(ghErr(res.status));
+          return res.json().then(function (j) { cfg.gistId = j.id; saveCfg(); });
+        });
+      }
+      return fetch(GH + '/gists/' + cfg.gistId, { method: 'PATCH', headers: ghHeaders(), body: JSON.stringify(files) }).then(function (res) {
+        if (res.status === 404) { cfg.gistId = ''; saveCfg(); return ghPush(merged); }
+        if (!res.ok) throw new Error(ghErr(res.status));
+      });
+    });
+  }
+
+  // --- optional encryption (PBKDF2 → AES-GCM); GitHub only ever sees ciphertext ---
+  function ab2b64(buf) { var b = new Uint8Array(buf), s = ''; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); }
+  function b642ab(s) { var bin = atob(s), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; }
+  function deriveKey(pass, salt) {
+    var enc = new TextEncoder();
+    return crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']).then(function (km) {
+      return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: salt, iterations: 120000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    });
+  }
+  function serializeDoc(doc) {
+    var json = JSON.stringify(doc);
+    if (!cfg.pass) return Promise.resolve(json);
+    var salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    return deriveKey(cfg.pass, salt).then(function (key) {
+      return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, new TextEncoder().encode(json));
+    }).then(function (ct) { return JSON.stringify({ thread_enc: 1, salt: ab2b64(salt), iv: ab2b64(iv), ct: ab2b64(ct) }); });
+  }
+  function parseDoc(content) {
+    var obj; try { obj = JSON.parse(content); } catch (e) { return Promise.reject(new Error('corrupt sync data')); }
+    if (!obj || !obj.thread_enc) return Promise.resolve(obj || {});
+    if (!cfg.pass) return Promise.reject(new Error('this sync is encrypted — enter the passphrase'));
+    return deriveKey(cfg.pass, new Uint8Array(b642ab(obj.salt))).then(function (key) {
+      return crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(b642ab(obj.iv)) }, key, b642ab(obj.ct));
+    }).then(function (pt) { return JSON.parse(new TextDecoder().decode(pt)); }, function () { return Promise.reject(new Error('wrong passphrase')); });
+  }
+
+  // --- orchestration ---
+  function doSync(manual) {
+    if (!cfg.on) return Promise.resolve();
+    if (syncing) { pendingSync = true; return Promise.resolve(); }
+    if (!navigator.onLine) { setDot(true); if (manual) footFlash('Offline — Thread will sync when you reconnect.'); return Promise.resolve(); }
+    syncing = true; updateSheet();
+    var conflicts = [];
+    return ghPull().then(function (remote) {
+      var merged = mergeDocs(loadBase(), snapshot(), remote || {}, conflicts);
+      applyLocal(merged);
+      return ghPush(merged).then(function () {
+        saveBase(merged);
+        cfg.lastSync = Date.now(); cfg.lastError = ''; saveCfg(); backoff = 0; setDot(false);
+        var uniq = conflicts.filter(function (v, i) { return conflicts.indexOf(v) === i; });
+        if (uniq.length) footFlash(conflicts.length + ' item' + (conflicts.length > 1 ? 's were' : ' was') + ' also changed on another device — your copy was kept.');
+        else if (manual) footFlash('Synced.');
+      });
+    }).catch(function (e) {
+      cfg.lastError = String(e && e.message || e); saveCfg(); setDot(true);
+      if (manual) footFlash('Sync failed: ' + cfg.lastError, true);
+      scheduleBackoff();
+    }).then(function () {
+      syncing = false; updateSheet();
+      if (pendingSync) { pendingSync = false; doSync(false); }
+    });
+  }
+  function scheduleSync() {
+    if (!cfg || !cfg.on || applyingRemote) return;
+    setDot(true); clearTimeout(syncT); syncT = setTimeout(function () { doSync(false); }, 2000);
+  }
+  function scheduleBackoff() {
+    if (!cfg.on) return;
+    backoff = Math.min(backoff ? backoff * 2 : 2000, 60000);
+    clearTimeout(backoffT); backoffT = setTimeout(function () { doSync(false); }, backoff);
+  }
+
+  // --- sync UI ---
+  function ago(ts) { var s = Math.round((Date.now() - ts) / 1000); if (s < 45) return 'just now'; var m = Math.round(s / 60); if (m < 60) return m + ' min ago'; var h = Math.round(m / 60); if (h < 24) return h + 'h ago'; return Math.round(h / 24) + 'd ago'; }
+  function setDot(on) { var d = $('syncDot'); if (d) d.hidden = !(on && cfg.on); }
+  function showSyncErr(msg) { var e = $('syncErr'); e.style.display = 'block'; e.textContent = msg; }
+  function clearSyncErr() { var e = $('syncErr'); e.style.display = 'none'; e.textContent = ''; }
+  function updateSheet() {
+    var sheetOpen = $('syncOverlay').classList.contains('open');
+    if (cfg.on) { setDot(syncing ? false : (!!cfg.lastError || pendingSync)); }
+    if (!sheetOpen) return;
+    if (cfg.on) {
+      $('syncSetup').hidden = true; $('syncOn').hidden = false; $('syncOff').hidden = false; $('syncGo').textContent = 'Sync now';
+      $('syncCodeOut').textContent = cfg.gistId || '(creating…)';
+      $('syncStatus').textContent = syncing ? 'Syncing…' : cfg.lastError ? ('Last sync failed: ' + cfg.lastError) : cfg.lastSync ? ('On · synced ' + ago(cfg.lastSync)) : 'On · not synced yet';
+      $('syncOnNote').textContent = (cfg.pass ? 'Encrypted with your passphrase — GitHub can’t read it. ' : 'Not encrypted. ') + 'On another device: open Sync, paste a token, the same passphrase, and this code.';
+    } else {
+      $('syncSetup').hidden = false; $('syncOn').hidden = true; $('syncOff').hidden = true; $('syncGo').textContent = 'Turn on sync';
+      $('syncStatus').textContent = 'Off. Your data stays on this device only.';
+    }
+  }
+  $('syncBtn').onclick = function () { clearSyncErr(); $('syncToken').value = ''; $('syncPass').value = cfg.pass || ''; $('syncCodeIn').value = ''; $('syncOverlay').classList.add('open'); updateSheet(); };
+  $('syncClose').onclick = function () { $('syncOverlay').classList.remove('open'); };
+  $('syncOverlay').onclick = function (e) { if (e.target === this) this.classList.remove('open'); };
+  $('syncCopy').onclick = function () { if (!cfg.gistId) return; try { navigator.clipboard.writeText(cfg.gistId).then(function () { footFlash('Sync code copied.'); }, function () {}); } catch (e) {} };
+  $('syncOff').onclick = function () {
+    if (!confirm('Disconnect sync on this device? Your data stays here — it just stops syncing. The gist on GitHub is left alone (delete it there if you want it gone).')) return;
+    cfg = { on: false, token: '', gistId: '', pass: '', lastSync: 0, lastError: '' }; saveCfg();
+    try { localStorage.removeItem('thread-sync-base'); } catch (e) {}
+    setDot(false); updateSheet(); footFlash('Sync disconnected.');
+  };
+  $('syncGo').onclick = function () {
+    if (cfg.on) { doSync(true); return; }
+    var token = $('syncToken').value.trim();
+    if (!token) { showSyncErr('Paste a GitHub token first.'); return; }
+    if (typeof crypto === 'undefined' || !crypto.subtle) { if ($('syncPass').value) { showSyncErr('This browser can’t encrypt here (needs HTTPS). Leave the passphrase blank, or open Thread over https.'); return; } }
+    clearSyncErr();
+    cfg.token = token; cfg.pass = $('syncPass').value; cfg.gistId = $('syncCodeIn').value.trim(); cfg.on = true; cfg.lastSync = 0; cfg.lastError = ''; saveCfg();
+    try { localStorage.removeItem('thread-sync-base'); } catch (e) {} // fresh link → first merge is a clean union
+    updateSheet();
+    doSync(true).then(function () {
+      if (cfg.lastError && !cfg.gistId) { cfg.on = false; saveCfg(); showSyncErr(cfg.lastError); setDot(false); }
+      updateSheet();
+    });
+  };
+
+  // --- triggers: open, focus, reconnect (debounced change-trigger lives in save*) ---
+  // Always attached; doSync() no-ops while sync is off.
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) doSync(false); });
+  window.addEventListener('online', function () { setDot(true); doSync(false); });
+  window.addEventListener('focus', function () { doSync(false); });
+
   // ---------- reminders ----------
   var hasNotif = typeof Notification !== 'undefined';
   function updateBell() {
@@ -1380,6 +1666,8 @@
   }
   updateBell();
   render(); tick(); setInterval(tick, 30000);
+  setDot(cfg.on && (!!cfg.lastError));
+  if (cfg.on) doSync(false); // pull anything that changed on another device since last open
 
   // Offline shell + home-screen install. Needs a secure context.
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
