@@ -379,6 +379,19 @@
   .prod-tags .d { color: var(--done); font-weight: 700; }
   .prod-tags .m { color: var(--now); font-weight: 700; }
   .prod-tags .sep { color: var(--line); margin: 0 5px; }
+  /* import modal */
+  .imp-photo { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
+  .imp-photo summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent-ink); }
+  .imp-steps { margin: 8px 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); line-height: 1.9; }
+  #photoReply { margin: 6px 0 8px; }
+  .imp-preview { max-height: 250px; overflow-y: auto; margin-top: 6px; }
+  .imp-preview .ip-day { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin: 10px 0 2px; }
+  .imp-row { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-top: 1px solid var(--line-2); font-size: 13px; }
+  .imp-row input { flex: none; width: 17px; height: 17px; }
+  .imp-row .ir-time { color: var(--ink-3); font-variant-numeric: tabular-nums; flex: none; width: 96px; }
+  .imp-row .ir-title { flex: 1; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .imp-row.dup { opacity: .55; }
+  .imp-row .ir-tag { flex: none; font-size: 9.5px; font-weight: 800; padding: 1px 5px; border-radius: 4px; background: var(--line-2); color: var(--ink-3); }
   .codebox { display: flex; align-items: center; gap: 8px; }
   .codebox code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 12px; background: var(--line-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; color: var(--ink-2); }
 </style>
@@ -466,7 +479,7 @@
       <span class="dlabel" id="weekLabel2"></span>
       <button class="today-btn" id="thisWeekBtn2">This week</button>
     </div>
-    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one · <button class="linkbtn" id="catsBtn">Categories</button> · <button class="linkbtn" id="icsBtn">Import .ics</button><input type="file" id="icsFile" accept=".ics,text/calendar" hidden></p>
+    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one · <button class="linkbtn" id="catsBtn">Categories</button> · <button class="linkbtn" id="importBtn">Import</button><input type="file" id="icsFile" accept=".ics,text/calendar" hidden></p>
     <div class="sched-scroll" id="schedScroll"></div>
   </div>
 
@@ -541,6 +554,35 @@
     <div class="sheet-btns">
       <button class="btn ghost" id="addCancel">Cancel</button>
       <button class="btn primary" id="addSave">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import meetings (.ics or photo via Claude) -->
+<div class="overlay" id="importOverlay">
+  <div class="sheet">
+    <h3>Import meetings</h3>
+    <p class="hint">Bring a week of meetings onto your schedule. Everything happens on your device — nothing is uploaded. New meetings take your selected category’s colour.</p>
+    <div class="fld">
+      <label>From a calendar file (.ics)</label>
+      <button class="btn ghost" id="icsPick">Choose a .ics file…</button>
+      <p class="hint" style="margin-top:6px">The accurate route. In Outlook: File → Save Calendar → this week, Full details.</p>
+    </div>
+    <details class="imp-photo" id="photoDetails">
+      <summary>Or import from a photo (via Claude)</summary>
+      <p class="hint">For when you only have a screenshot, or the .ics is out of date.</p>
+      <ol class="imp-steps">
+        <li><button class="btn ghost sm" id="copyPhotoPrompt">Copy prompt for Claude</button> then send it to Claude with a photo of your calendar.</li>
+        <li>Paste Claude’s reply here:</li>
+      </ol>
+      <textarea id="photoReply" class="focus-ta" rows="3" placeholder="Paste Claude’s JSON reply here…"></textarea>
+      <button class="btn primary sm" id="photoParse">Preview meetings</button>
+      <div id="photoErr" class="err" style="display:none"></div>
+    </details>
+    <div id="importPreview" class="imp-preview"></div>
+    <div class="sheet-btns">
+      <button class="btn ghost" id="importClose">Close</button>
+      <button class="btn primary" id="importAdd" hidden>Add selected</button>
     </div>
   </div>
 </div>
@@ -1123,7 +1165,6 @@
     series = series.filter(function (s) { return used[s.id]; });
     return { meetings: meetings, series: series, dup: dup };
   }
-  document.getElementById('icsBtn').onclick = function () { document.getElementById('icsFile').click(); };
   document.getElementById('icsFile').onchange = function () {
     var file = this.files && this.files[0]; this.value = ''; if (!file) return;
     var reader = new FileReader();
@@ -1134,9 +1175,123 @@
       clearDemoIfPristine();
       r.series.forEach(function (s) { state.series.push(s); });
       r.meetings.forEach(function (m) { state.meetings.push(m); });
-      save(); footFlash('Imported ' + r.meetings.length + ' meeting' + (r.meetings.length > 1 ? 's' : '') + '.'); render();
+      save(); document.getElementById('importOverlay').classList.remove('open');
+      footFlash('Imported ' + r.meetings.length + ' meeting' + (r.meetings.length > 1 ? 's' : '') + '.'); render();
     };
     reader.readAsText(file);
+  };
+
+  // ---------- import modal: .ics picker + photo-via-Claude ----------
+  var importOverlay = document.getElementById('importOverlay'), importRows = [];
+  function parseTimeLoose(v) {
+    if (v == null) return null;
+    var m = String(v).trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+    if (!m) return null;
+    var h = +m[1], min = m[2] ? +m[2] : 0, ap = m[3];
+    if (ap === 'pm' && h < 12) h += 12; if (ap === 'am' && h === 12) h = 0;
+    if (h > 24 || min > 59) return null;
+    return h * 60 + min;
+  }
+  function buildPhotoPrompt() {
+    var wkEnd = addDays(weekStart, 6), today = new Date();
+    var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    function f(d) { return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }); }
+    var weekLine = "I'm filling in the week of Monday " + f(weekStart) + ' to Sunday ' + f(wkEnd) + ' (' + iso(weekStart) + ' to ' + iso(wkEnd) + '), so map each day onto a real date in that week. If the photo shows its own explicit dates, trust those instead.';
+    return [
+      "Here's a photo of my calendar. Every meeting on it is mine — capture each meeting as its own separate time block.",
+      '', 'Reply with ONLY a JSON code block in exactly this shape — one entry per meeting:',
+      '', '{"meetings":[{"date":"YYYY-MM-DD","start":"9:00","end":"9:30","title":"Team standup"}]}', '',
+      'How to read the calendar accurately — this is the part that usually goes wrong:',
+      '1. First work out the layout: week view (days across columns, times down the side) or a single day? Find the weekday/date strip and the time column.',
+      '2. Take one day at a time, top (earliest) to bottom (latest). Capture every block separately — back-to-back meetings are separate entries even when they touch; do not merge them, do not skip short ones.',
+      '3. For each meeting read its title and line its top and bottom edges against the time axis for the exact start and end. Put the final answer in a single ```json code block at the end — I only read that block.',
+      '', 'Rules:',
+      '- "date" is YYYY-MM-DD. ' + weekLine,
+      '- "start"/"end" can be 24-hour ("13:30") or 12-hour ("1:30pm"). If a block has no printed time, read it from where it sits against the time axis, to the nearest 15 minutes.',
+      '- "title" is the meeting name as written. Keep it short but recognisable.',
+      '- Include every timed meeting, even 15-minute ones. Skip all-day banners and anything with no time.',
+      '- If a meeting runs past midnight, give the real end time (e.g. "02:00"); do not split it yourself.',
+      '- Today is ' + iso(today) + ' (a ' + dayNames[today.getDay()] + ').'
+    ].join('\n');
+  }
+  function parsePhotoMeetings(text) {
+    var obj = parseReply(text);
+    if (!obj) return { errors: [String(text || '').trim() ? "That doesn't look like Claude's reply — paste the whole reply, the JSON block and all." : 'Nothing pasted yet.'], rows: [] };
+    var arr = Array.isArray(obj) ? obj : (obj.meetings || obj.events || []);
+    if (!Array.isArray(arr) || !arr.length) return { errors: ['No meetings found in that reply.'], rows: [] };
+    var errors = [], rows = [];
+    function add(dateIso, start, dur, title, overnight) {
+      var dup = state.meetings.some(function (m) { return m.dateIso === dateIso && m.start === start && m.title === title; });
+      rows.push({ dateIso: dateIso, start: start, dur: dur, title: title, overnight: !!overnight, dup: dup, checked: !dup });
+    }
+    arr.forEach(function (s, i) {
+      var n = 'Meeting ' + (i + 1);
+      var dm = String(s.date || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (!dm) { errors.push(n + ': bad or missing date.'); return; }
+      var mo = +dm[2], d = new Date(+dm[1], mo - 1, +dm[3]);
+      if (isNaN(d.getTime()) || d.getMonth() !== mo - 1) { errors.push(n + ': ' + s.date + ' is not a real date.'); return; }
+      var start = parseTimeLoose(s.start), end = parseTimeLoose(s.end);
+      if (start == null) { errors.push(n + ': bad start time.'); return; }
+      var title = String(s.title || s.label || 'Meeting').slice(0, 80);
+      if (end == null || end === start) { add(iso(d), start, 30, title, false); return; }
+      if (end > start) { add(iso(d), start, end - start, title, false); return; }
+      add(iso(d), start, 1440 - start, title, true); // runs past midnight → split
+      if (end > 0) add(iso(addDays(d, 1)), 0, end, title, true);
+    });
+    rows.sort(function (a, b) { return a.dateIso < b.dateIso ? -1 : a.dateIso > b.dateIso ? 1 : a.start - b.start; });
+    return { errors: errors, rows: rows };
+  }
+  function endLabel(start, dur) { var e = (start + dur) % 1440, c = fmtClock(e); return c.t + c.ap.toLowerCase(); }
+  function renderImportPreview(rows) {
+    importRows = rows || [];
+    var wrap = $('importPreview'); wrap.innerHTML = '';
+    if (!importRows.length) { $('importAdd').hidden = true; return; }
+    var lastDay = null;
+    importRows.forEach(function (r) {
+      if (r.dateIso !== lastDay) { lastDay = r.dateIso; wrap.appendChild(el('div', 'ip-day', parseIso(r.dateIso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))); }
+      var row = el('div', 'imp-row' + (r.dup ? ' dup' : ''));
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = r.checked; cb.onchange = function () { r.checked = cb.checked; };
+      row.appendChild(cb);
+      var sc = fmtClock(r.start);
+      row.appendChild(el('span', 'ir-time', sc.t + sc.ap.toLowerCase() + '–' + endLabel(r.start, r.dur)));
+      row.appendChild(el('span', 'ir-title', r.title));
+      if (r.overnight) row.appendChild(el('span', 'ir-tag', 'OVERNIGHT'));
+      if (r.dup) row.appendChild(el('span', 'ir-tag', 'already added'));
+      wrap.appendChild(row);
+    });
+    $('importAdd').hidden = false;
+  }
+  function openImport() { $('photoReply').value = ''; $('photoErr').style.display = 'none'; $('importPreview').innerHTML = ''; $('importAdd').hidden = true; $('photoDetails').open = false; importRows = []; importOverlay.classList.add('open'); }
+  document.getElementById('importBtn').onclick = openImport;
+  $('importClose').onclick = function () { importOverlay.classList.remove('open'); };
+  importOverlay.onclick = function (e) { if (e.target === importOverlay) importOverlay.classList.remove('open'); };
+  $('icsPick').onclick = function () { $('icsFile').click(); };
+  $('copyPhotoPrompt').onclick = function () {
+    var b = this;
+    copyText(buildPhotoPrompt()).then(
+      function () { b.textContent = '✓ Copied — paste it to Claude'; setTimeout(function () { b.textContent = 'Copy prompt for Claude'; }, 1900); },
+      function () { $('photoReply').value = buildPhotoPrompt(); $('photoErr').style.display = ''; $('photoErr').textContent = "Couldn't reach the clipboard — the prompt is in the box. Copy it, send it to Claude with your photo, then paste the reply back over it."; }
+    );
+  };
+  $('photoParse').onclick = function () {
+    var r = parsePhotoMeetings($('photoReply').value);
+    if (!r.rows.length) { $('photoErr').style.display = ''; $('photoErr').textContent = r.errors[0] || 'No meetings found.'; $('importPreview').innerHTML = ''; $('importAdd').hidden = true; return; }
+    $('photoErr').style.display = r.errors.length ? '' : 'none';
+    if (r.errors.length) $('photoErr').textContent = r.errors.length + ' entr' + (r.errors.length > 1 ? 'ies were' : 'y was') + ' skipped; the rest are below.';
+    renderImportPreview(r.rows);
+  };
+  $('importAdd').onclick = function () {
+    var sel = importRows.filter(function (r) { return r.checked; });
+    if (!sel.length) { importOverlay.classList.remove('open'); return; }
+    clearDemoIfPristine();
+    var added = 0;
+    sel.forEach(function (r) {
+      if (state.meetings.some(function (m) { return m.dateIso === r.dateIso && m.start === r.start && m.title === r.title; })) return;
+      state.meetings.push({ id: 'm' + uid(), seriesId: null, title: r.title, dateIso: r.dateIso, start: r.start, dur: r.dur, cat: activeCat, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false, status: '' });
+      added++;
+    });
+    save(); importOverlay.classList.remove('open'); render();
+    footFlash('Imported ' + added + ' meeting' + (added === 1 ? '' : 's') + '.');
   };
 
   // ---------- view routing ----------
