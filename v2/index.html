@@ -50,7 +50,36 @@
   .brand { display: flex; align-items: center; gap: 9px; }
   .brand h1 { font-size: 21px; font-weight: 800; letter-spacing: -.02em; margin: 0; }
   .brand .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
-  .brand .tag { font-size: 12.5px; color: var(--ink-3); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .brand .bell {
+    margin-left: auto; border: 1px solid var(--line); background: var(--surface); border-radius: 8px;
+    width: 32px; height: 32px; cursor: pointer; font-size: 14px; line-height: 1; filter: grayscale(1) opacity(.55);
+  }
+  .brand .bell:hover { border-color: var(--ink-3); }
+  .brand .bell.on { filter: none; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--accent-soft); }
+  .brand .tag { font-size: 12.5px; color: var(--ink-3); margin-left: 10px; font-variant-numeric: tabular-nums; }
+
+  /* ---- Next-up nudge ---- */
+  .nudge {
+    position: sticky; top: 8px; z-index: 15; display: flex; align-items: center; gap: 13px; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh);
+    padding: 12px 15px; margin-bottom: 16px;
+  }
+  .nudge.soon { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-soft); }
+  .nudge.imminent { border-color: var(--now); background: var(--now-soft); }
+  .nudge .count {
+    flex: none; min-width: 60px; text-align: center; font-variant-numeric: tabular-nums;
+    font-size: 15px; font-weight: 800; color: var(--accent-ink); line-height: 1.1;
+  }
+  .nudge.imminent .count { color: var(--now); }
+  .nudge .count .unit { display: block; font-size: 9.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); margin-top: 2px; }
+  .nudge .divr { flex: none; width: 1px; align-self: stretch; background: var(--line); }
+  .nudge .ntitle { font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+  .nudge .nprep { font-size: 12.5px; margin-top: 3px; line-height: 1.45; }
+  .nudge .nprep.owe { color: var(--owe); font-weight: 600; }
+  .nudge .nprep.left { color: var(--ink-2); }
+  .nudge .nbody { min-width: 0; flex: 1; }
+  .nudge .nbody .ntitle .title-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notify-note { font-size: 11.5px; color: var(--ink-3); margin: -8px 0 14px; }
   .brief {
     margin: 16px 0 18px; font-size: 16px; line-height: 1.45; color: var(--ink-2); font-weight: 500;
   }
@@ -225,10 +254,14 @@
 <div class="wrap">
   <div class="brand">
     <h1>Thread</h1><span class="dot"></span>
+    <button class="bell" id="bellBtn" title="Remind me before meetings" aria-label="Meeting reminders">&#128276;</button>
     <span class="tag" id="clock">—</span>
   </div>
 
   <div class="brief" id="brief"></div>
+
+  <div class="nudge" id="nudge" hidden></div>
+  <div class="notify-note" id="notifyNote" hidden></div>
 
   <div class="daynav">
     <button class="nav-btn" id="prevDay" aria-label="Previous day">‹</button>
@@ -294,6 +327,11 @@
   "use strict";
   var KEY = 'thread-cockpit-v1';
   var ME = 'Angela';
+  var NUDGE_LEAD = 15; // minutes before a meeting that the nudge/notification fires
+  var notifyOn = false;
+  var notified = {};
+  try { notifyOn = localStorage.getItem('thread-notify') === '1'; } catch (e) {}
+  try { notified = JSON.parse(localStorage.getItem('thread-notified')) || {}; } catch (e) {}
 
   // ---------- date / time helpers ----------
   function iso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
@@ -440,6 +478,7 @@
   // ---------- render ----------
   function render() {
     renderBrief();
+    renderNudge();
     renderDayNav();
     renderAgenda();
     renderOwe();
@@ -447,9 +486,8 @@
 
   function renderBrief() {
     var b = document.getElementById('brief');
-    b.innerHTML = '';
     var td = todayIso();
-    var todays = state.meetings.filter(function (m) { return m.dateIso === td; }).sort(function (a, c) { return a.start - c.start; });
+    var todays = state.meetings.filter(function (m) { return m.dateIso === td; });
     var n = nowMin();
     var upcoming = todays.filter(function (m) { return m.start + m.dur > n; });
     var owe = openOwe().length;
@@ -458,10 +496,39 @@
       b.innerHTML = '<b>You’re through your meetings for today.</b>' + (owe ? ' <span class="accent">' + owe + ' thing' + (owe > 1 ? 's' : '') + '</span> still to close out below.' : ' Nothing outstanding. ✓');
       return;
     }
-    var nextM = upcoming[0];
-    var mins = nextM.start - n;
-    var whenStr = mins <= 0 ? 'happening now' : mins < 60 ? 'in ' + mins + ' min' : 'at ' + fmtClock(nextM.start).t + fmtClock(nextM.start).ap.toLowerCase();
-    b.innerHTML = '<b>' + upcoming.length + '</b> meeting' + (upcoming.length > 1 ? 's' : '') + ' left today · next: <span class="accent">' + escapeHtml(nextM.title) + '</span> ' + whenStr + '.';
+    b.innerHTML = '<b>' + upcoming.length + '</b> meeting' + (upcoming.length > 1 ? 's' : '') + ' left today' + (owe ? ' · <span class="accent">' + owe + ' to close out</span>' : '') + '.';
+  }
+
+  // The sticky "next up" nudge: what's coming, when, and what it needs of you.
+  function renderNudge() {
+    var n = document.getElementById('nudge'), td = todayIso();
+    if (viewed !== td) { n.hidden = true; return; }
+    var mins = nowMin();
+    var up = state.meetings.filter(function (m) { return m.dateIso === td && m.start + m.dur > mins; }).sort(function (a, c) { return a.start - c.start; });
+    if (!up.length) { n.hidden = true; return; }
+    var m = up[0], until = m.start - mins;
+    n.hidden = false;
+    n.className = 'nudge' + (until <= NUDGE_LEAD ? ' imminent' : until <= 60 ? ' soon' : '');
+    var cnt = until <= 0 ? 'now' : until < 60 ? String(until) : Math.floor(until / 60) + ':' + String(until % 60).padStart(2, '0');
+    var unit = until <= 0 ? '' : until < 60 ? 'min' : 'hrs';
+    var pt = priorThreadFor(m), prepTxt = '', prepCls = 'left';
+    if (pt) {
+      var oweItems = pt.thread.items.filter(function (x) { return !x.done; });
+      if (oweItems.length) { prepTxt = 'You owe: ' + oweItems.map(function (x) { return x.text; }).join(' · '); prepCls = 'owe'; }
+      else if (pt.thread.summary) { prepTxt = 'Last time: ' + pt.thread.summary; }
+    } else if (m.seriesId) { prepTxt = 'First in this thread — nothing carried forward yet.'; }
+    else { prepTxt = fmtClock(m.start).t + fmtClock(m.start).ap.toLowerCase() + '–' + fmtClock(m.start + m.dur).t + fmtClock(m.start + m.dur).ap.toLowerCase(); }
+    n.innerHTML = '';
+    var c = el('div', 'count'); c.innerHTML = cnt + (unit ? '<span class="unit">' + unit + '</span>' : '<span class="unit">right now</span>');
+    n.appendChild(c);
+    n.appendChild(el('div', 'divr'));
+    var body = el('div', 'nbody');
+    var t = el('div', 'ntitle'); t.appendChild(el('span', 'title-txt', m.title));
+    if (m.seriesId) t.appendChild(el('span', 'sbadge', (seriesById(m.seriesId) || {}).cadence === 'daily' ? 'Daily' : 'Weekly'));
+    body.appendChild(t);
+    if (prepTxt) body.appendChild(el('div', 'nprep ' + prepCls, prepTxt));
+    n.appendChild(body);
+    n.onclick = function () { m.expanded = true; save(); render(); var card = document.querySelector('.mtg.next, .mtg.nowm'); if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
   }
 
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -743,12 +810,47 @@
 
   document.getElementById('resetBtn').onclick = function () { if (confirm('Reset the demo to its starting state?')) { state = seed(); viewed = todayIso(); save(); render(); } };
 
+  // ---------- reminders ----------
+  var hasNotif = typeof Notification !== 'undefined';
+  function updateBell() {
+    var b = $('bellBtn'); b.classList.toggle('on', notifyOn && hasNotif && Notification.permission === 'granted');
+    var note = $('notifyNote');
+    if (notifyOn && hasNotif && Notification.permission === 'denied') { note.hidden = false; note.textContent = 'Notifications are blocked in your browser settings — the on-screen nudge above still works.'; }
+    else if (notifyOn && hasNotif && Notification.permission === 'granted') { note.hidden = false; note.textContent = 'Reminders on — a nudge ' + NUDGE_LEAD + ' min before each meeting, while Thread is open.'; }
+    else { note.hidden = true; }
+  }
+  $('bellBtn').onclick = function () {
+    if (!hasNotif) { var note = $('notifyNote'); note.hidden = false; note.textContent = 'This browser doesn’t support notifications — the on-screen nudge still works.'; return; }
+    if (notifyOn) { notifyOn = false; try { localStorage.setItem('thread-notify', '0'); } catch (e) {} updateBell(); return; }
+    Notification.requestPermission().then(function (p) {
+      notifyOn = (p === 'granted'); try { localStorage.setItem('thread-notify', notifyOn ? '1' : '0'); } catch (e) {}
+      updateBell();
+      if (p === 'denied') { var note = $('notifyNote'); note.hidden = false; note.textContent = 'Notifications are blocked — allow them in your browser’s site settings. The on-screen nudge above still works.'; }
+    });
+  };
+  function maybeNotify() {
+    if (!notifyOn || !hasNotif || Notification.permission !== 'granted') return;
+    var td = todayIso(), mins = nowMin();
+    state.meetings.forEach(function (m) {
+      if (m.dateIso !== td) return;
+      var until = m.start - mins;
+      if (until <= NUDGE_LEAD && until >= 0 && !notified[m.id]) {
+        notified[m.id] = 1; try { localStorage.setItem('thread-notified', JSON.stringify(notified)); } catch (e) {}
+        var pt = priorThreadFor(m), owe = pt ? pt.thread.items.filter(function (x) { return !x.done; }) : [];
+        var body = owe.length ? 'You owe: ' + owe.map(function (x) { return x.text; }).join('; ') : (pt && pt.thread.summary ? 'Last time: ' + pt.thread.summary : 'Starting soon');
+        try { new Notification(m.title + (until <= 0 ? ' starting now' : ' in ' + until + ' min'), { body: body, tag: 'thread-' + m.id }); } catch (e) {}
+      }
+    });
+  }
+
   // ---------- live clock ----------
   function tick() {
     var d = new Date();
     document.getElementById('clock').textContent = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    if (viewed === todayIso()) { renderBrief(); } // keep "next in N min" honest
+    if (viewed === todayIso()) { renderBrief(); renderNudge(); } // keep the countdown honest
+    maybeNotify();
   }
+  updateBell();
   render(); tick(); setInterval(tick, 30000);
 })();
 </script>
