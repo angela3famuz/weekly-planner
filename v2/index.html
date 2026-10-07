@@ -548,6 +548,7 @@
     mk(null, 'Fall Giving 2026 kickoff', today, 990, 60, '', null);
     mk('s-sam', 'Weekly 1:1 with Sam', next, 900, 30, '', null);
     return {
+      demo: true,
       series: [
         { id: 's-sam', title: 'Weekly 1:1 with Sam', cadence: 'weekly', color: COLORS[0] },
         { id: 's-standup', title: 'Daily Standup', cadence: 'daily', color: COLORS[1] }
@@ -555,6 +556,8 @@
       meetings: m
     };
   }
+  // The seeded sample data clears itself the moment you bring in real data.
+  function clearDemoIfPristine() { if (state.demo) { state.series = []; state.meetings = []; state.demo = false; } }
   function load() { try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.meetings) return s; } catch (e) {} return seed(); }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
   var state = load();
@@ -911,6 +914,7 @@
       var r; try { r = icsImport(parseICS(reader.result)); } catch (e) { footFlash('Could not read that .ics file.', true); return; }
       if (!r.meetings.length) { footFlash(r.dup ? 'All ' + r.dup + ' meetings are already on your schedule.' : 'No timed meetings found in that file.', true); return; }
       if (!confirm('Import ' + r.meetings.length + ' meeting' + (r.meetings.length > 1 ? 's' : '') + (r.dup ? ' (' + r.dup + ' already on your schedule, skipped)' : '') + '?')) return;
+      clearDemoIfPristine();
       r.series.forEach(function (s) { state.series.push(s); });
       r.meetings.forEach(function (m) { state.meetings.push(m); });
       save(); footFlash('Imported ' + r.meetings.length + ' meeting' + (r.meetings.length > 1 ? 's' : '') + '.'); render();
@@ -1224,9 +1228,10 @@
       } else {
         m.title = title; m.start = start; m.dur = dur; m.dateIso = date;
       }
-      save(); addOverlay.classList.remove('open'); viewed = date; render(); return;
+      state.demo = false; save(); addOverlay.classList.remove('open'); viewed = date; render(); return;
     }
 
+    clearDemoIfPristine();
     var repeat = $('fRepeat').value, seriesId = null;
     if (repeat !== 'none') {
       seriesId = 's' + Date.now().toString(36);
@@ -1277,6 +1282,7 @@
   };
   // Bring a v1 Weekly Planner backup into the merged model (additive).
   function migrateFromV1(data) {
+    clearDemoIfPristine();
     var weeks = data.weeks || {}, mAdded = 0, wAdded = 0;
     var di = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
     var dn = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun', next: 'Next week' };
@@ -1301,7 +1307,7 @@
       });
     });
     var v2h = getHabits(), have = {}; v2h.forEach(function (h) { have[h.id] = 1; });
-    (data.habits || []).forEach(function (h) { var hh = typeof h === 'string' ? { id: h, name: h } : { id: String(h.id), name: String(h.name || '') }; if (hh.id && !have[hh.id]) { v2h.push(hh); have[hh.id] = 1; } });
+    (data.habits || []).forEach(function (h) { if (h && h.deleted) return; var hh = typeof h === 'string' ? { id: h, name: h } : { id: String(h.id), name: String(h.name || '') }; if (hh.id && hh.name && !have[hh.id]) { v2h.push(hh); have[hh.id] = 1; } });
     saveHabits(v2h); save();
     return { weeks: wAdded, meetings: mAdded };
   }
