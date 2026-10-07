@@ -420,8 +420,7 @@
     <span class="foot-tools">
       <button class="linkbtn" id="syncBtn">Sync<span class="sync-dot" id="syncDot" hidden></span></button> ·
       <button class="linkbtn" id="backupBtn">Download backup</button> ·
-      <button class="linkbtn" id="restoreBtn">Restore</button> ·
-      <button class="linkbtn" id="resetBtn">Reset demo</button>
+      <button class="linkbtn" id="restoreBtn">Restore</button><span id="resetWrap" hidden> · <button class="linkbtn" id="resetBtn">Reset demo</button></span>
       <input type="file" id="restoreFile" accept=".json,application/json" hidden>
     </span>
     <span class="foot-flash" id="footFlash"></span>
@@ -1377,7 +1376,12 @@
     save(); addOverlay.classList.remove('open'); render();
   };
 
-  document.getElementById('resetBtn').onclick = function () { if (confirm('Reset the demo to its starting state? (Your weeks, habits and backups stay.)')) { state = seed(); viewed = todayIso(); save(); render(); } };
+  // "Reset demo" overwrites the cockpit with the sample seed, so it's a dev-only tool:
+  // shown only on localhost / file://, never in the hosted (production) app.
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '') {
+    document.getElementById('resetWrap').hidden = false;
+    document.getElementById('resetBtn').onclick = function () { if (confirm('Reset the demo to its starting state? (Your weeks, habits and backups stay.)')) { state = seed(); viewed = todayIso(); save(); render(); } };
+  }
 
   // ---------- backup / restore (everything is local; this is the safety net) ----------
   function footFlash(msg, bad) { var f = document.getElementById('footFlash'); f.textContent = msg; f.style.color = bad ? '#c0392b' : 'var(--done)'; setTimeout(function () { f.textContent = ''; }, 3200); }
