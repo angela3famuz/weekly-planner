@@ -376,6 +376,17 @@
   .prod-stat { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line-2); }
   .prod-stat .k { color: var(--ink); font-weight: 600; }
   .prod-tags { color: var(--ink-3); }
+  .prod-jump { margin-top: 11px; width: 100%; border: none; background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; font-size: 13px; padding: 10px; border-radius: 10px; cursor: pointer; }
+  /* Today meeting-progress pill */
+  .dayprog { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 13px; margin-bottom: 11px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); font-size: 13px; }
+  .dayprog .dp-counts { color: var(--ink-2); }
+  .dayprog .dp-counts .d { color: var(--done); font-weight: 700; }
+  .dayprog .dp-counts .m { color: var(--now); font-weight: 700; }
+  .dayprog .dp-sep { color: var(--line); }
+  .dayprog .dp-mark { margin-left: auto; border: none; background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; font-size: 12.5px; padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+  .dayprog .dp-allclear { margin-left: auto; color: var(--done); font-weight: 700; font-size: 12.5px; }
+  .mtg.flash-hl { animation: hlpulse 1.5s ease; }
+  @keyframes hlpulse { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 25% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); } }
   .prod-tags .d { color: var(--done); font-weight: 700; }
   .prod-tags .m { color: var(--now); font-weight: 700; }
   .prod-tags .sep { color: var(--line); margin: 0 5px; }
@@ -424,6 +435,7 @@
       <button class="today-btn" id="todayBtn">Today</button>
     </div>
 
+    <div class="dayprog" id="dayProgress" hidden></div>
     <div class="agenda" id="agenda"></div>
     <div class="owe-sec" id="oweSec"></div>
   </div>
@@ -864,7 +876,37 @@
     renderNudge();
     renderDayNav();
     renderAgenda();
+    renderDayProgress();
     renderOwe();
+  }
+  // Glanceable meeting progress for the viewed day, with a tap to the first unmarked one.
+  function renderDayProgress() {
+    var box = $('dayProgress');
+    var done = 0, missed = 0, toMark = [];
+    state.meetings.filter(function (m) { return m.dateIso === viewed; }).forEach(function (m) {
+      if (m.status === 'done') done++;
+      else if (m.status === 'missed') missed++;
+      else if (statusOf(m) === 'past') toMark.push(m);
+    });
+    if (!done && !missed && !toMark.length) { box.hidden = true; return; }
+    box.hidden = false; box.innerHTML = '';
+    var counts = el('div', 'dp-counts');
+    counts.innerHTML = '<span class="d">' + done + ' done</span><span class="dp-sep"> · </span><span class="m">' + missed + ' missed</span>';
+    box.appendChild(counts);
+    if (toMark.length) {
+      toMark.sort(function (a, b) { return a.start - b.start; });
+      var btn = el('button', 'dp-mark', toMark.length + ' to mark →');
+      btn.onclick = function () { flashMeeting(toMark[0].id); };
+      box.appendChild(btn);
+    } else {
+      box.appendChild(el('span', 'dp-allclear', 'all marked ✓'));
+    }
+  }
+  function flashMeeting(id) {
+    var card = document.querySelector('[data-mid="' + id + '"]');
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.remove('flash-hl'); void card.offsetWidth; card.classList.add('flash-hl');
   }
   document.getElementById('demoSync').onclick = function () { document.getElementById('syncBtn').click(); };
   document.getElementById('demoRestore').onclick = function () { document.getElementById('restoreBtn').click(); };
@@ -933,6 +975,17 @@
     }
     body.appendChild(statRow('Meetings', mDone, mMissed, mPastUnmarked ? 'to mark' : 'upcoming', mPastUnmarked || mUpcoming));
     body.appendChild(statRow('Tasks', tDone, tMissed, 'open', tOpen));
+    if (mPastUnmarked) {
+      var jump = el('button', 'prod-jump', mPastUnmarked + ' meeting' + (mPastUnmarked > 1 ? 's' : '') + ' to mark →');
+      jump.onclick = function () {
+        var cands = state.meetings.filter(function (m) { return m.dateIso >= ws && m.dateIso <= we && m.status !== 'done' && m.status !== 'missed' && statusOf(m) === 'past'; })
+          .sort(function (a, b) { return a.dateIso < b.dateIso ? -1 : a.dateIso > b.dateIso ? 1 : a.start - b.start; });
+        if (!cands.length) return;
+        viewed = cands[0].dateIso; setView('today');
+        setTimeout(function () { flashMeeting(cands[0].id); }, 60);
+      };
+      body.appendChild(jump);
+    }
   }
   function renderHabits() {
     var wrap = document.getElementById('habits'); wrap.innerHTML = '';
@@ -1392,6 +1445,7 @@
     var st = statusOf(m);
     var open = m.expanded || isNext;
     var card = el('div', 'mtg ' + st + (m.status ? ' m-' + m.status : '') + (open ? ' open' : '') + (isNext && st === 'next' ? ' next' : '') + (st === 'now' ? ' nowm' : ''));
+    card.dataset.mid = m.id;
     var head = el('div', 'mhead');
     head.onclick = function () { m.expanded = !open ? true : !m.expanded; if (isNext && m.expanded === false) m.expanded = false; save(); render(); };
 
