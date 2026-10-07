@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Thread — v2 prototype</title>
+<style>
+  /* =========================================================
+     Thread — v2 thin-slice prototype
+     Proves one mechanic: a recurring meeting is a THREAD. Paste a
+     transcript into one instance, distill it through Claude, and the
+     "where we left off" + the action items you still owe surface on the
+     NEXT instance. Everything else (the full cockpit) comes later.
+     Deliberately NOT the v1 pastels — a focused, grown-up work surface.
+     ========================================================= */
+  :root {
+    --bg: #f5f5f4;
+    --surface: #ffffff;
+    --ink: #17171c;
+    --ink-2: #5c5c68;
+    --ink-3: #8a8a96;
+    --line: #e7e7ea;
+    --line-2: #efeff1;
+    --accent: #4f46e5;       /* indigo — confident, not cute */
+    --accent-soft: #eef0fe;
+    --owe: #b45309;          /* amber — you still owe this */
+    --owe-soft: #fdf3e7;
+    --done: #15803d;
+    --done-soft: #e8f5ec;
+    --now: #4f46e5;
+    --r: 14px;
+    --r-sm: 9px;
+    --sh: 0 1px 2px rgba(20,20,30,.04), 0 6px 22px rgba(20,20,30,.06);
+    --maxw: 680px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121214; --surface: #1b1b1f; --ink: #f2f2f4; --ink-2: #aeaeb8;
+      --ink-3: #7c7c88; --line: #2b2b31; --line-2: #232329;
+      --accent: #8b87f5; --accent-soft: #23233a; --owe: #e0a15a; --owe-soft: #332a1d;
+      --done: #6cc38c; --done-soft: #1e2a22; --now: #8b87f5;
+      --sh: 0 1px 2px rgba(0,0,0,.3), 0 8px 26px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: max(20px, env(safe-area-inset-top)) 18px 64px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; }
+
+  /* Header / now-strip */
+  header { margin-bottom: 22px; }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 {
+    font-size: 23px; font-weight: 800; letter-spacing: -.02em; margin: 0;
+  }
+  .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); transform: translateY(-2px); }
+  .brand .tag { font-size: 13px; color: var(--ink-3); font-weight: 500; }
+  .nowline {
+    display: flex; align-items: center; gap: 9px; margin-top: 12px;
+    font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums;
+  }
+  .nowline .pulse {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--now);
+    box-shadow: 0 0 0 0 rgba(79,70,229,.5); animation: pulse 2.4s infinite;
+  }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(79,70,229,.45)} 70%{box-shadow:0 0 0 7px rgba(79,70,229,0)} 100%{box-shadow:0 0 0 0 rgba(79,70,229,0)} }
+  .nowline b { color: var(--ink); font-weight: 700; }
+
+  .series-label {
+    font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--ink-3); margin: 26px 2px 10px;
+  }
+  .series-title { display: flex; align-items: center; gap: 10px; margin: 0 2px 16px; }
+  .series-title h2 { font-size: 19px; font-weight: 750; letter-spacing: -.01em; margin: 0; }
+  .cadence {
+    font-size: 11px; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); border-radius: 999px; padding: 3px 9px;
+  }
+
+  /* Instance cards */
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+    box-shadow: var(--sh); padding: 18px; margin-bottom: 14px; position: relative;
+  }
+  .card.upcoming { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+  .card.upcoming::before {
+    content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 3px;
+    background: var(--accent); border-radius: 0 3px 3px 0;
+  }
+  .inst-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .inst-when { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .inst-when .date { font-size: 16px; font-weight: 700; }
+  .inst-when .rel { font-size: 12.5px; color: var(--ink-3); }
+  .badge {
+    font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+    padding: 4px 9px; border-radius: 999px;
+  }
+  .badge.next { background: var(--accent); color: #fff; }
+  .badge.past { background: var(--line-2); color: var(--ink-3); }
+
+  /* "Where we left off" prep block on the upcoming instance */
+  .prep { margin-top: 14px; }
+  .prep-empty {
+    font-size: 13.5px; color: var(--ink-3); background: var(--line-2);
+    border-radius: var(--r-sm); padding: 14px 15px; line-height: 1.5;
+  }
+  .leftoff {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0; padding: 12px 14px; margin-bottom: 14px;
+  }
+  .leftoff .k { font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 5px; }
+  .leftoff .v { font-size: 14.5px; color: var(--ink); line-height: 1.5; }
+  .owe-k { font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--owe); margin: 2px 0 8px; }
+  .owe-empty { font-size: 13px; color: var(--ink-3); }
+
+  ul.items { list-style: none; margin: 0; padding: 0; }
+  ul.items li {
+    display: flex; align-items: flex-start; gap: 10px; padding: 8px 0;
+    border-top: 1px solid var(--line-2); font-size: 14px;
+  }
+  ul.items li:first-child { border-top: none; }
+  .chk {
+    flex: none; width: 19px; height: 19px; border-radius: 6px; border: 2px solid var(--ink-3);
+    margin-top: 1px; cursor: pointer; display: grid; place-items: center;
+    color: transparent; font-size: 12px; font-weight: 900; background: var(--surface);
+    transition: all .12s;
+  }
+  .chk.on { background: var(--done); border-color: var(--done); color: #fff; }
+  li.done .txt { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--done); }
+  .owe-tag {
+    flex: none; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--owe); background: var(--owe-soft); border-radius: 5px; padding: 2px 6px; margin-top: 1px;
+  }
+
+  .decisions { margin-top: 12px; }
+  .decisions .k { font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 6px; }
+  .decisions li { font-size: 13.5px; color: var(--ink-2); padding: 5px 0; border-top: 1px solid var(--line-2); }
+  .decisions li:first-child { border-top: none; }
+
+  /* Transcript / distill flow on the past instance */
+  .distill { margin-top: 14px; }
+  textarea {
+    width: 100%; border: 1.5px solid var(--line); border-radius: var(--r-sm);
+    background: var(--bg); color: var(--ink); font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    padding: 11px 12px; resize: vertical; outline: none; min-height: 92px;
+  }
+  textarea:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+  .btn {
+    border: none; border-radius: var(--r-sm); padding: 0 16px; min-height: 40px;
+    font-size: 13.5px; font-weight: 650; cursor: pointer; font-family: inherit;
+    display: inline-flex; align-items: center; gap: 7px; transition: filter .12s, background .12s;
+  }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.07); }
+  .btn.ghost { background: transparent; color: var(--ink-2); border: 1.5px solid var(--line); }
+  .btn.ghost:hover { border-color: var(--ink-3); color: var(--ink); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .linkbtn { background: none; border: none; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+  .hint { font-size: 12.5px; color: var(--ink-3); margin: 9px 0 0; line-height: 1.5; }
+  .step-n { color: var(--accent); font-weight: 800; }
+  .flash { font-size: 12.5px; color: var(--done); font-weight: 650; }
+  .err { font-size: 12.5px; color: #c0392b; font-weight: 600; margin-top: 8px; }
+  [hidden] { display: none !important; }
+
+  .foot { margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); line-height: 1.6; }
+  .foot b { color: var(--ink-2); }
+  .reset { float: right; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>Thread</h1><span class="dot"></span>
+      <span class="tag">meetings that remember</span>
+    </div>
+    <div class="nowline">
+      <span class="pulse"></span>
+      <span id="nowText">—</span>
+    </div>
+  </header>
+
+  <div class="series-label">Recurring series</div>
+  <div class="series-title">
+    <h2 id="seriesTitle">Weekly 1:1 with Sam</h2>
+    <span class="cadence" id="seriesCadence">Weekly</span>
+  </div>
+
+  <div id="instances"></div>
+
+  <div class="foot">
+    <button class="btn ghost reset" id="resetBtn" style="min-height:32px;padding:0 12px;font-size:12px">Reset demo</button>
+    <b>Thin-slice prototype.</b> One mechanic only: a recurring meeting is a thread.
+    Distill last week's transcript → this week opens knowing where you left off and what you still owe.
+    Your action items carry forward until you check them off. Everything stays on this device.
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var KEY = 'thread-v2-proto';
+
+  // ---- Sample content so the magic moment is one click away ----------------
+  var SAMPLE_TRANSCRIPT =
+    "Angela: Thanks for making time, Sam. Let's start with the budget question from last week.\n" +
+    "Sam: Right. We've got about 12k left in the Q4 line, but marketing wants half of it.\n" +
+    "Angela: I want to hold firm on the platform migration spend. Can you push back on marketing?\n" +
+    "Sam: I can. I'll send them the revised allocation by Thursday.\n" +
+    "Angela: Good. The other thing — the design review deck. I still owe you that. I'll get it to you before Friday's review.\n" +
+    "Sam: Perfect.\n" +
+    "Angela: And we agreed to move the NYC expansion kickoff to the 15th, yes?\n" +
+    "Sam: Correct, the 15th. I'll update the invite.\n" +
+    "Angela: Last thing — I need to loop Ian in on the reporting standardization. I'll set that up.\n" +
+    "Sam: Sounds good. Same time next week?\n" +
+    "Angela: Yep. See you then.";
+
+  // What a real Claude reply looks like — used only by the "see example reply" shortcut.
+  var SAMPLE_REPLY = JSON.stringify({
+    summary: "You held firm on the platform-migration spend and still owe Sam the design review deck before Friday's review.",
+    decisions: ["Protect platform-migration budget; marketing gets no extra from the Q4 line", "NYC expansion kickoff moves to the 15th"],
+    action_items: ["Send Sam the design review deck before Friday's review", "Loop Ian in on the reporting standardization"]
+  }, null, 2);
+
+  // ---- State ---------------------------------------------------------------
+  function daysAgo(n) { var d = new Date(); d.setDate(d.getDate() - n); d.setHours(15, 0, 0, 0); return d; }
+  // First weekly 3pm slot that is still in the future, so "next up" is real
+  // whatever time of day the demo is opened.
+  function nextWeeklyAfter(ts) { var d = new Date(ts); while (d.getTime() <= Date.now()) d.setDate(d.getDate() + 7); return d; }
+
+  function seed() {
+    var last = daysAgo(7);
+    return {
+      title: "Weekly 1:1 with Sam",
+      cadence: "Weekly",
+      instances: [
+        { id: 'i1', at: last.getTime(), transcript: SAMPLE_TRANSCRIPT, thread: null, draftReply: '', showReply: false },
+        { id: 'i2', at: nextWeeklyAfter(last.getTime()).getTime(), transcript: '', thread: null, draftReply: '', showReply: false }
+      ]
+    };
+  }
+  function load() {
+    try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.instances) return s; } catch (e) {}
+    return seed();
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  var state = load();
+
+  // ---- Helpers -------------------------------------------------------------
+  function fmtDate(ts) {
+    return new Date(ts).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  }
+  function relDay(ts) {
+    var d0 = new Date(); d0.setHours(0, 0, 0, 0);
+    var d1 = new Date(ts); d1.setHours(0, 0, 0, 0);
+    var diff = Math.round((d1 - d0) / 86400000);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    if (diff === -1) return 'Yesterday';
+    if (diff < 0) return (-diff) + ' days ago';
+    return 'in ' + diff + ' days';
+  }
+  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+
+  // Tolerant parse of Claude's reply — a fenced block, extra chatter, or curly
+  // quotes are all fine (mirrors v1's import parser).
+  function parseReply(text) {
+    var t = String(text || '').replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+    var fence = t.match(/```[a-zA-Z]*\s*([\s\S]*?)```/); if (fence) t = fence[1];
+    var start = t.search(/[{[]/); if (start < 0) return null;
+    var open = t[start], close = open === '{' ? '}' : ']', depth = 0, inStr = false, esc = false, end = -1;
+    for (var i = start; i < t.length; i++) {
+      var c = t[i];
+      if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true; else if (c === open) depth++; else if (c === close && --depth === 0) { end = i; break; }
+    }
+    if (end < 0) return null;
+    try { return JSON.parse(t.slice(start, end + 1)); } catch (e) {
+      try { return JSON.parse(t.slice(start, end + 1).replace(/,\s*([}\]])/g, '$1')); } catch (e2) { return null; }
+    }
+  }
+  function normalizeThread(obj) {
+    if (!obj) return null;
+    var items = (obj.action_items || obj.actionItems || obj.actions || []);
+    return {
+      summary: String(obj.summary || obj.where_we_left_off || '').trim(),
+      decisions: (obj.decisions || []).map(function (d) { return String(d).trim(); }).filter(Boolean),
+      items: items.map(function (x) { return { text: String(typeof x === 'string' ? x : (x.text || '')).trim(), done: false }; }).filter(function (x) { return x.text; })
+    };
+  }
+
+  function buildPrompt(inst) {
+    return [
+      "Here's the transcript of my \"" + state.title + "\" meeting. Read it and reply with ONLY a JSON code block in exactly this shape — no other text:",
+      "",
+      '{"summary":"one sentence on where we left off","decisions":["decisions made"],"action_items":["things I committed to doing"]}',
+      "",
+      "Rules:",
+      "- \"summary\" is one sentence I can read right before the next meeting to remember where we left off.",
+      "- \"decisions\" are concrete decisions the group made (leave the list empty if none).",
+      "- \"action_items\" are ONLY the things I personally committed to doing — not other people's. Short imperative phrases.",
+      "- I am \"Angela\" in the transcript.",
+      "",
+      "Transcript:",
+      inst.transcript
+    ].join("\n");
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    return new Promise(function (res, rej) {
+      var ta = document.createElement('textarea'); ta.value = text;
+      ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); res(); } catch (e) { rej(e); } document.body.removeChild(ta);
+    });
+  }
+  function flash(btn, msg) {
+    var span = btn.parentNode.querySelector('.flash') || el('span', 'flash');
+    span.className = 'flash'; span.textContent = msg;
+    if (!span.parentNode) btn.parentNode.appendChild(span);
+    setTimeout(function () { if (span.parentNode) span.parentNode.removeChild(span); }, 2600);
+  }
+
+  // ---- The carried-forward thread: latest distilled past instance ----------
+  function latestThreadBefore(ts) {
+    var best = null;
+    state.instances.forEach(function (i) {
+      if (i.at < ts && i.thread && (!best || i.at > best.at)) best = i;
+    });
+    return best;
+  }
+
+  // ---- Render --------------------------------------------------------------
+  function render() {
+    document.getElementById('seriesTitle').textContent = state.title;
+    document.getElementById('seriesCadence').textContent = state.cadence;
+    var wrap = document.getElementById('instances');
+    wrap.innerHTML = '';
+    var now = Date.now();
+    // upcoming first (the operating view), then past
+    var sorted = state.instances.slice().sort(function (a, b) {
+      var au = a.at >= now, bu = b.at >= now;
+      if (au !== bu) return au ? -1 : 1;
+      return au ? a.at - b.at : b.at - a.at;
+    });
+    sorted.forEach(function (inst) { wrap.appendChild(renderInstance(inst, inst.at >= now)); });
+  }
+
+  function renderInstance(inst, upcoming) {
+    var card = el('div', 'card' + (upcoming ? ' upcoming' : ''));
+    var head = el('div', 'inst-head');
+    var when = el('div', 'inst-when');
+    when.appendChild(el('span', 'date', fmtDate(inst.at)));
+    when.appendChild(el('span', 'rel', relDay(inst.at) + ' · 3:00 PM'));
+    head.appendChild(when);
+    head.appendChild(el('span', 'badge ' + (upcoming ? 'next' : 'past'), upcoming ? 'Next up' : 'Past'));
+    card.appendChild(head);
+
+    if (upcoming) card.appendChild(renderPrep(inst));
+    else card.appendChild(renderPast(inst));
+    return card;
+  }
+
+  // Upcoming instance: what the thread hands you before you walk in.
+  function renderPrep(inst) {
+    var box = el('div', 'prep');
+    var prior = latestThreadBefore(inst.at);
+    if (!prior) {
+      box.appendChild(el('div', 'prep-empty', "No thread yet. Distill last week's transcript below and this meeting will open knowing where you left off."));
+      return box;
+    }
+    var th = prior.thread;
+    if (th.summary) {
+      var lo = el('div', 'leftoff');
+      lo.appendChild(el('div', 'k', 'Where you left off'));
+      lo.appendChild(el('div', 'v', th.summary));
+      box.appendChild(lo);
+    }
+    // Open action items you still owe (carried forward, unchecked)
+    box.appendChild(el('div', 'owe-k', 'You still owe'));
+    var open = th.items.filter(function (x) { return !x.done; });
+    if (!open.length) {
+      box.appendChild(el('div', 'owe-empty', 'Nothing outstanding — you’re clear. ✓'));
+    } else {
+      var ul = el('ul', 'items');
+      th.items.forEach(function (item) {
+        if (item.done) return;
+        var li = el('li');
+        var chk = el('div', 'chk', '✓');
+        chk.onclick = function () { item.done = true; save(); render(); };
+        li.appendChild(chk);
+        li.appendChild(el('span', 'owe-tag', 'owe'));
+        li.appendChild(el('span', 'txt', item.text));
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+    }
+    return box;
+  }
+
+  // Past instance: paste transcript -> distill round-trip -> thread.
+  function renderPast(inst) {
+    var box = el('div', 'distill');
+    if (inst.thread) {
+      // Already distilled — show the result, with its action items checkable.
+      var th = inst.thread;
+      if (th.summary) {
+        var lo = el('div', 'leftoff');
+        lo.appendChild(el('div', 'k', 'Summary'));
+        lo.appendChild(el('div', 'v', th.summary));
+        box.appendChild(lo);
+      }
+      if (th.items.length) {
+        box.appendChild(el('div', 'owe-k', 'Your action items'));
+        var ul = el('ul', 'items');
+        th.items.forEach(function (item) {
+          var li = el('li' + (item.done ? '' : ''), item.done ? 'done' : '');
+          var chk = el('div', 'chk' + (item.done ? ' on' : ''), '✓');
+          chk.onclick = function () { item.done = !item.done; save(); render(); };
+          li.appendChild(chk);
+          li.appendChild(el('span', 'txt', item.text));
+          ul.appendChild(li);
+        });
+        box.appendChild(ul);
+      }
+      if (th.decisions.length) {
+        var dec = el('div', 'decisions');
+        dec.appendChild(el('div', 'k', 'Decisions'));
+        var dul = el('ul', 'items');
+        th.decisions.forEach(function (d) { dul.appendChild(el('li', null, d)); });
+        dec.appendChild(dul);
+        box.appendChild(dec);
+      }
+      var redo = el('button', 'linkbtn', 'Re-distill from transcript');
+      redo.style.marginTop = '12px';
+      redo.onclick = function () { inst.thread = null; inst.showReply = false; save(); render(); };
+      box.appendChild(redo);
+      return box;
+    }
+
+    // Not distilled yet: the capture flow.
+    var ta = el('textarea');
+    ta.value = inst.transcript || '';
+    ta.placeholder = 'Paste the meeting transcript here…';
+    ta.oninput = function () { inst.transcript = ta.value; save(); };
+    box.appendChild(ta);
+
+    var row = el('div', 'row');
+    var distillBtn = el('button', 'btn primary', '✨ Distill with Claude');
+    distillBtn.onclick = function () {
+      if (!(inst.transcript || '').trim()) { ta.focus(); return; }
+      copyText(buildPrompt(inst)).then(function () { flash(distillBtn, '✓ Prompt copied — paste it to Claude'); }, function () {});
+      inst.showReply = true; save(); render();
+    };
+    row.appendChild(distillBtn);
+    if (!inst.transcript) {
+      var sample = el('button', 'linkbtn', 'use the sample transcript');
+      sample.onclick = function () { inst.transcript = SAMPLE_TRANSCRIPT; save(); render(); };
+      row.appendChild(sample);
+    }
+    box.appendChild(row);
+    box.appendChild(mkHint('<span class="step-n">1</span> Copy the prompt → paste it to Claude with the transcript · <span class="step-n">2</span> paste Claude’s JSON reply back below → Apply.'));
+
+    if (inst.showReply) {
+      var rta = el('textarea');
+      rta.placeholder = 'Paste Claude’s reply here (a JSON code block is fine)…';
+      rta.style.marginTop = '12px';
+      rta.value = inst.draftReply || '';
+      rta.oninput = function () { inst.draftReply = rta.value; save(); };
+      box.appendChild(rta);
+      var row2 = el('div', 'row');
+      var apply = el('button', 'btn primary', 'Apply → build the thread');
+      apply.onclick = function () {
+        var parsed = normalizeThread(parseReply(rta.value));
+        if (!parsed || (!parsed.summary && !parsed.items.length)) {
+          var e = box.querySelector('.err') || el('div', 'err'); e.className = 'err';
+          e.textContent = "Couldn’t read that as a distilled reply. Paste the whole JSON Claude returned.";
+          if (!e.parentNode) box.appendChild(e);
+          return;
+        }
+        inst.thread = parsed; inst.draftReply = ''; inst.showReply = false; save(); render();
+      };
+      row2.appendChild(apply);
+      var ex = el('button', 'linkbtn', 'see an example reply (demo)');
+      ex.onclick = function () { inst.draftReply = SAMPLE_REPLY; save(); render(); };
+      row2.appendChild(ex);
+      box.appendChild(row2);
+    }
+    return box;
+  }
+
+  function mkHint(html) { var p = el('p', 'hint'); p.innerHTML = html; return p; }
+
+  // ---- Live now-line (addresses gripe #1, and it's the cockpit's spine) ----
+  function tickNow() {
+    var d = new Date();
+    var t = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    var day = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    document.getElementById('nowText').innerHTML = '<b>' + t + '</b> · ' + day;
+  }
+
+  document.getElementById('resetBtn').onclick = function () {
+    if (confirm('Reset the demo to its starting state?')) { state = seed(); save(); render(); }
+  };
+
+  render();
+  tickNow();
+  setInterval(tickNow, 15000);
+})();
+</script>
+</body>
+</html>
