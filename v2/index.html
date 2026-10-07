@@ -341,6 +341,29 @@
   .interval-row { display: flex; align-items: center; gap: 10px; }
   .interval-row input { width: 92px; flex: none; }
   .interval-row span { color: var(--ink-2); font-size: 14px; }
+  /* segmented status control in the edit sheet */
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg-btn { flex: 1; padding: 9px 4px; font-size: 13px; font-weight: 600; background: var(--surface); color: var(--ink-2); border: none; border-left: 1px solid var(--line); cursor: pointer; }
+  .seg-btn:first-child { border-left: none; }
+  .seg-btn.on { background: var(--accent-soft); color: var(--accent-ink); }
+  .seg-btn.on[data-st="done"] { background: color-mix(in srgb, var(--done) 16%, var(--surface)); color: var(--done); }
+  .seg-btn.on[data-st="missed"] { background: color-mix(in srgb, var(--now) 16%, var(--surface)); color: var(--now); }
+  /* tap-to-cycle status dot on a past meeting card */
+  .mstat { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--line); background: var(--surface); color: transparent; font-size: 13px; font-weight: 800; line-height: 1; cursor: pointer; align-self: center; }
+  .mstat.done { border-color: var(--done); background: var(--done); color: #fff; }
+  .mstat.missed { border-color: var(--now); background: var(--now); color: #fff; }
+  .mtg.m-missed .title-txt { text-decoration: line-through; text-decoration-color: var(--now); color: var(--ink-3); }
+  .mtg.m-done .title-txt { color: var(--ink-2); }
+  /* categories */
+  .cat-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .cat-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+  .cat-chip .sw { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .cat-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+  .cat-chip.newcat { color: var(--accent-ink); font-weight: 600; }
+  .cat-list-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line-2); }
+  .cat-list-row input[type=color] { width: 36px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; flex: none; }
+  .cat-list-row input[type=text] { flex: 1; }
+  .cat-list-row .cdel { flex: none; border: none; background: none; color: var(--ink-3); font-size: 16px; cursor: pointer; padding: 4px; }
   .codebox { display: flex; align-items: center; gap: 8px; }
   .codebox code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 12px; background: var(--line-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; color: var(--ink-2); }
 </style>
@@ -423,7 +446,7 @@
       <span class="dlabel" id="weekLabel2"></span>
       <button class="today-btn" id="thisWeekBtn2">This week</button>
     </div>
-    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one · <button class="linkbtn" id="icsBtn">Import .ics</button><input type="file" id="icsFile" accept=".ics,text/calendar" hidden></p>
+    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one · <button class="linkbtn" id="catsBtn">Categories</button> · <button class="linkbtn" id="icsBtn">Import .ics</button><input type="file" id="icsFile" accept=".ics,text/calendar" hidden></p>
     <div class="sched-scroll" id="schedScroll"></div>
   </div>
 
@@ -456,6 +479,10 @@
       <label>What is it?</label>
       <input type="text" id="fTitle" placeholder="e.g. 1:1 with Sam" maxlength="80">
     </div>
+    <div class="fld" id="catFld">
+      <label>Category</label>
+      <div class="cat-chips" id="catChips"></div>
+    </div>
     <div class="fld-row">
       <div class="fld"><label>Date</label><input type="date" id="fDate"></div>
       <div class="fld"><label>Start</label><input type="time" id="fStart" step="300" value="09:00"></div>
@@ -474,6 +501,14 @@
     </div>
     <p class="hint" id="repeatHint"></p>
     <label class="chkline" id="scopeRow" hidden><input type="checkbox" id="fScope"><span id="scopeText"></span></label>
+    <div class="fld" id="statusFld" hidden>
+      <label>Status <span style="font-weight:400;opacity:.7">— mark after it happens</span></label>
+      <div class="seg" id="fStatusSeg">
+        <button type="button" class="seg-btn" data-st="">Open</button>
+        <button type="button" class="seg-btn" data-st="done">Completed</button>
+        <button type="button" class="seg-btn" data-st="missed">Missed</button>
+      </div>
+    </div>
     <div class="edit-del" id="delWrap" hidden>
       <button class="linkbtn danger" id="delStart">Delete…</button>
       <span class="del-choices" id="delChoices" hidden>Delete
@@ -487,6 +522,17 @@
       <button class="btn ghost" id="addCancel">Cancel</button>
       <button class="btn primary" id="addSave">Add</button>
     </div>
+  </div>
+</div>
+
+<!-- Categories manager -->
+<div class="overlay" id="catOverlay">
+  <div class="sheet">
+    <h3>Categories</h3>
+    <p class="hint">Colour-code your meetings. Pick a category when adding one; the colour shows on the agenda and schedule.</p>
+    <div id="catList"></div>
+    <div class="add-line" style="margin-top:10px"><input id="catNewName" placeholder="New category name" maxlength="24"><button class="add-plus" id="catAddBtn" aria-label="Add category">＋</button></div>
+    <div class="sheet-btns"><button class="btn primary" id="catClose">Done</button></div>
   </div>
 </div>
 
@@ -625,7 +671,15 @@
   var viewed = todayIso();
 
   function seriesById(id) { for (var i = 0; i < state.series.length; i++) if (state.series[i].id === id) return state.series[i]; return null; }
-  function colorFor(m) { if (m.color) return m.color; var s = seriesById(m.seriesId); return s ? s.color : '#8a8a96'; }
+  // ---------- colour-coded categories (named list, à la v1) ----------
+  var DEFAULT_CATS = [{ id: 'personal', name: 'Personal', color: COLORS[2] }, { id: 'work', name: 'Work', color: COLORS[0] }];
+  function getCats() { try { var c = JSON.parse(localStorage.getItem('thread-cats')); if (Array.isArray(c)) return c; } catch (e) {} return DEFAULT_CATS.slice(); }
+  function saveCats(c) { try { localStorage.setItem('thread-cats', JSON.stringify(c)); } catch (e) {} scheduleSync(); }
+  function catById(id) { if (!id) return null; var c = getCats(); for (var i = 0; i < c.length; i++) if (c[i].id === id) return c[i]; return null; }
+  var activeCat = ''; try { activeCat = localStorage.getItem('thread-active-cat') || ''; } catch (e) {}
+  function setActiveCat(id) { activeCat = id || ''; try { localStorage.setItem('thread-active-cat', activeCat); } catch (e) {} }
+  // Colour precedence: explicit category → stored colour (migrated) → series colour → grey.
+  function colorFor(m) { var c = catById(m.cat); if (c) return c.color; if (m.color) return m.color; var s = seriesById(m.seriesId); return s ? s.color : '#8a8a96'; }
   // Short label for a series' cadence, honouring the repeat interval.
   function cadenceLabel(s) {
     if (!s) return '';
@@ -1118,7 +1172,7 @@
   function renderMeeting(m, isNext) {
     var st = statusOf(m);
     var open = m.expanded || isNext;
-    var card = el('div', 'mtg ' + st + (open ? ' open' : '') + (isNext && st === 'next' ? ' next' : '') + (st === 'now' ? ' nowm' : ''));
+    var card = el('div', 'mtg ' + st + (m.status ? ' m-' + m.status : '') + (open ? ' open' : '') + (isNext && st === 'next' ? ' next' : '') + (st === 'now' ? ' nowm' : ''));
     var head = el('div', 'mhead');
     head.onclick = function () { m.expanded = !open ? true : !m.expanded; if (isNext && m.expanded === false) m.expanded = false; save(); render(); };
 
@@ -1139,9 +1193,13 @@
     body.appendChild(renderSub(m, st));
     head.appendChild(body);
 
-    // right-side state marker
+    // right-side marker: past meetings get a tap-to-cycle done/missed dot
     if (st === 'past') {
-      head.appendChild(el('div', 'state ' + (m.thread ? 'done' : 'ghost'), m.thread ? '✓' : ''));
+      var dot = el('button', 'mstat ' + (m.status || 'none'), m.status === 'done' ? '✓' : m.status === 'missed' ? '✕' : '');
+      dot.title = 'mark completed → missed → clear';
+      dot.setAttribute('aria-label', 'Mark completed or missed');
+      dot.onclick = function (e) { e.stopPropagation(); m.status = m.status === 'done' ? 'missed' : m.status === 'missed' ? '' : 'done'; save(); render(); };
+      head.appendChild(dot);
     } else {
       head.appendChild(el('div', 'chev', '›'));
     }
@@ -1267,8 +1325,71 @@
 
   // ---------- add / edit meeting ----------
   var addOverlay = document.getElementById('addOverlay');
-  var editingId = null;
+  var editingId = null, editStatus = '', editCat = '';
   function $(id) { return document.getElementById(id); }
+
+  // category chip picker inside the add/edit sheet
+  function renderCatChips(selected) {
+    editCat = selected || '';
+    var wrap = $('catChips'); wrap.innerHTML = '';
+    function chip(id, name, color) {
+      var c = el('div', 'cat-chip' + (editCat === id ? ' on' : ''));
+      if (color) { var sw = el('span', 'sw'); sw.style.background = color; c.appendChild(sw); }
+      c.appendChild(el('span', null, name));
+      c.onclick = function () { renderCatChips(id); };
+      return c;
+    }
+    wrap.appendChild(chip('', 'None', null));
+    getCats().forEach(function (ct) { wrap.appendChild(chip(ct.id, ct.name, ct.color)); });
+    var add = el('div', 'cat-chip newcat', '+ New');
+    add.onclick = function () {
+      var name = (prompt('New category name:') || '').trim(); if (!name) return;
+      var cats = getCats(), id = 'c' + uid(); cats.push({ id: id, name: name.slice(0, 24), color: COLORS[cats.length % COLORS.length] }); saveCats(cats);
+      renderCatChips(id);
+    };
+    wrap.appendChild(add);
+  }
+
+  // ---------- category manager ----------
+  var catOverlay = document.getElementById('catOverlay');
+  function renderCatList() {
+    var list = $('catList'); list.innerHTML = '';
+    var cats = getCats();
+    if (!cats.length) list.appendChild(el('div', 'empty-list', 'No categories yet — add one below.'));
+    cats.forEach(function (ct) {
+      var row = el('div', 'cat-list-row');
+      var col = document.createElement('input'); col.type = 'color'; col.value = ct.color;
+      col.oninput = function () { ct.color = col.value; saveCats(cats); render(); };
+      var name = document.createElement('input'); name.type = 'text'; name.value = ct.name; name.maxLength = 24;
+      name.oninput = function () { ct.name = name.value; saveCats(cats); };
+      var del = el('button', 'cdel', '✕'); del.setAttribute('aria-label', 'Delete category');
+      del.onclick = function () {
+        if (!confirm('Delete “' + ct.name + '”? Meetings keep their colour but lose the label.')) return;
+        var kept = getCats().filter(function (x) { return x.id !== ct.id; });
+        // meetings in this category keep the colour as an explicit colour
+        state.meetings.forEach(function (m) { if (m.cat === ct.id) { m.color = ct.color; m.cat = ''; } });
+        if (activeCat === ct.id) setActiveCat('');
+        saveCats(kept); save(); renderCatList(); render();
+      };
+      row.appendChild(col); row.appendChild(name); row.appendChild(del); list.appendChild(row);
+    });
+  }
+  function openCats() { renderCatList(); catOverlay.classList.add('open'); }
+  document.getElementById('catsBtn').onclick = openCats;
+  $('catClose').onclick = function () { catOverlay.classList.remove('open'); };
+  catOverlay.onclick = function (e) { if (e.target === catOverlay) catOverlay.classList.remove('open'); };
+  $('catAddBtn').onclick = function () {
+    var nm = $('catNewName').value.trim(); if (!nm) return;
+    var cats = getCats(); cats.push({ id: 'c' + uid(), name: nm.slice(0, 24), color: COLORS[cats.length % COLORS.length] }); saveCats(cats);
+    $('catNewName').value = ''; renderCatList();
+  };
+  $('catNewName').onkeydown = function (e) { if (e.key === 'Enter') $('catAddBtn').click(); };
+  function setStatusSeg(st) {
+    editStatus = st;
+    var btns = document.querySelectorAll('#fStatusSeg .seg-btn');
+    for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('on', btns[i].getAttribute('data-st') === st);
+  }
+  (function () { var btns = document.querySelectorAll('#fStatusSeg .seg-btn'); for (var i = 0; i < btns.length; i++) btns[i].onclick = function () { setStatusSeg(this.getAttribute('data-st')); }; })();
 
   function openAdd(pref) {
     pref = pref || {};
@@ -1279,8 +1400,9 @@
     $('fStart').value = pref.start != null ? minToTime(pref.start) : '09:00';
     $('fDur').value = '30'; $('fRepeat').value = pref.start != null ? 'none' : 'weekly'; $('fInterval').value = '1';
     $('repeatFld').hidden = false; $('repeatHint').hidden = false;
-    $('scopeRow').hidden = true; $('delWrap').hidden = true;
+    $('scopeRow').hidden = true; $('delWrap').hidden = true; $('statusFld').hidden = true;
     $('addErr').style.display = 'none'; $('addSave').textContent = 'Add';
+    renderCatChips(activeCat);
     updateRepeatUI();
     addOverlay.classList.add('open');
     setTimeout(function () { $('fTitle').focus(); }, 50);
@@ -1299,6 +1421,8 @@
       $('repeatFld').hidden = false; $('repeatHint').hidden = false; $('fRepeat').value = 'none'; $('fInterval').value = '1';
       $('scopeRow').hidden = true; $('delSeries').hidden = true; updateRepeatUI();
     }
+    $('statusFld').hidden = false; setStatusSeg(m.status || '');
+    renderCatChips(m.cat || '');
     $('delWrap').hidden = false; $('delChoices').hidden = true; $('delStart').hidden = false;
     $('addErr').style.display = 'none'; $('addSave').textContent = 'Save';
     addOverlay.classList.add('open');
@@ -1338,13 +1462,15 @@
       var m = state.meetings.filter(function (x) { return x.id === editingId; })[0];
       if (!m) { addOverlay.classList.remove('open'); return; }
       if (m.seriesId && $('fScope').checked) {
-        // Apply name + time + length across the series (each instance keeps its date).
-        state.meetings.forEach(function (x) { if (x.seriesId === m.seriesId) { x.title = title; x.start = start; x.dur = dur; } });
+        // Apply name + time + length + category across the series (each instance keeps its date).
+        state.meetings.forEach(function (x) { if (x.seriesId === m.seriesId) { x.title = title; x.start = start; x.dur = dur; x.cat = editCat; } });
         var s = seriesById(m.seriesId); if (s) s.title = title;
         m.dateIso = date; // the one you edited can still move day
       } else {
-        m.title = title; m.start = start; m.dur = dur; m.dateIso = date;
+        m.title = title; m.start = start; m.dur = dur; m.dateIso = date; m.cat = editCat;
       }
+      m.status = editStatus; // done / missed / open, marked after the fact
+      if (editCat) setActiveCat(editCat);
       // Turn a one-off into a recurring thread, if asked.
       var rep = $('repeatFld').hidden ? 'none' : $('fRepeat').value;
       if (!m.seriesId && rep !== 'none') {
@@ -1354,7 +1480,7 @@
         m.seriesId = sid;
         genSeriesDates(date, rep, interval, false).forEach(function (dt) {
           if (state.meetings.some(function (x) { return x.dateIso === dt && x.start === start && x.title === title; })) return;
-          state.meetings.push({ id: 'm' + uid(), seriesId: sid, title: title, dateIso: dt, start: start, dur: dur, color: m.color || null, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false, status: '' });
+          state.meetings.push({ id: 'm' + uid(), seriesId: sid, title: title, dateIso: dt, start: start, dur: dur, color: m.color || null, cat: editCat, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false, status: '' });
         });
       }
       state.demo = false; save(); addOverlay.classList.remove('open'); viewed = date; render(); return;
@@ -1368,8 +1494,9 @@
     }
     var dates = repeat === 'none' ? [date] : genSeriesDates(date, repeat, interval, true);
     dates.forEach(function (dt) {
-      state.meetings.push({ id: 'm' + uid(), seriesId: seriesId, title: title, dateIso: dt, start: start, dur: dur, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false, status: '' });
+      state.meetings.push({ id: 'm' + uid(), seriesId: seriesId, title: title, dateIso: dt, start: start, dur: dur, cat: editCat, transcript: '', thread: null, draftReply: '', showReply: false, expanded: false, status: '' });
     });
+    if (editCat) setActiveCat(editCat);
     save(); addOverlay.classList.remove('open'); viewed = date; render();
   };
 
@@ -1498,8 +1625,9 @@
     var meetings = {}, series = {};
     if (!state.demo) { state.meetings.forEach(function (m) { meetings[m.id] = cleanMeeting(m); }); state.series.forEach(function (s) { series[s.id] = s; }); }
     var habits = {}; getHabits().forEach(function (h) { if (h && h.id) habits[h.id] = h; });
-    var notify = '0'; try { notify = localStorage.getItem('thread-notify') || '0'; } catch (e) {}
-    return { meetings: meetings, series: series, weeks: collectWeeks(), habits: habits, notify: notify };
+    var cats = {}; getCats().forEach(function (c) { if (c && c.id) cats[c.id] = c; });
+    var notify = '0', ac = ''; try { notify = localStorage.getItem('thread-notify') || '0'; ac = localStorage.getItem('thread-active-cat') || ''; } catch (e) {}
+    return { meetings: meetings, series: series, weeks: collectWeeks(), habits: habits, cats: cats, notify: notify, activeCat: ac };
   }
 
   // --- 3-way merge of a keyed collection ---
@@ -1532,7 +1660,9 @@
       series: mergeMaps(base.series, local.series, remote.series, conflicts, 'a series'),
       weeks: mergeMaps(base.weeks, local.weeks, remote.weeks, conflicts, 'a week'),
       habits: mergeMaps(base.habits, local.habits, remote.habits, conflicts, 'a habit'),
-      notify: merge1(base.notify, local.notify, remote.notify)
+      cats: mergeMaps(base.cats, local.cats, remote.cats, conflicts, 'a category'),
+      notify: merge1(base.notify, local.notify, remote.notify),
+      activeCat: merge1(base.activeCat, local.activeCat, remote.activeCat)
     };
   }
   function loadBase() { try { return JSON.parse(localStorage.getItem('thread-sync-base')) || {}; } catch (e) { return {}; } }
@@ -1558,10 +1688,12 @@
       existing.forEach(function (k) { if (!(k in want)) localStorage.removeItem(k); });
       Object.keys(want).forEach(function (k) { localStorage.setItem(k, JSON.stringify(want[k])); });
       localStorage.setItem('thread-habits', JSON.stringify(Object.keys(merged.habits).map(function (k) { return merged.habits[k]; })));
+      if (merged.cats) localStorage.setItem('thread-cats', JSON.stringify(Object.keys(merged.cats).map(function (k) { return merged.cats[k]; })));
       if (merged.notify != null) localStorage.setItem('thread-notify', merged.notify);
+      if (merged.activeCat != null) localStorage.setItem('thread-active-cat', merged.activeCat);
     } finally { applyingRemote = false; }
     wk = loadWeek(weekStart);
-    try { notifyOn = localStorage.getItem('thread-notify') === '1'; } catch (e) {}
+    try { notifyOn = localStorage.getItem('thread-notify') === '1'; activeCat = localStorage.getItem('thread-active-cat') || ''; } catch (e) {}
     render(); try { updateBell(); } catch (e) {}
   }
 
