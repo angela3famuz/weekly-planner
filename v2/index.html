@@ -260,6 +260,29 @@
   .cdel:hover { color: var(--now); }
   .empty-list { font-size: 13px; color: var(--ink-3); padding: 2px 0 2px; }
 
+  /* ---- Schedule grid ---- */
+  .sched-hint { font-size: 12px; color: var(--ink-3); margin: 0 2px 10px; }
+  .sched-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); box-shadow: var(--sh); }
+  .sched-inner { min-width: 760px; }
+  .sg-head { display: flex; position: sticky; top: 0; z-index: 2; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .sg-corner { width: 46px; flex: none; }
+  .sg-day { flex: 1; min-width: 92px; padding: 7px 4px; text-align: center; border-left: 1px solid var(--line-2); font-size: 13px; font-weight: 750; }
+  .sg-day .dow { font-size: 10px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
+  .sg-day.today, .sg-day.today .dow { color: var(--accent-ink); }
+  .sg-body { display: flex; position: relative; }
+  .time-axis { width: 46px; flex: none; position: relative; }
+  .time-axis .hr { position: absolute; right: 6px; font-size: 10px; color: var(--ink-3); transform: translateY(-50%); font-variant-numeric: tabular-nums; }
+  .day-col { flex: 1; min-width: 92px; position: relative; border-left: 1px solid var(--line-2); cursor: copy; }
+  .day-col.today { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+  .day-col .hrline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line-2); pointer-events: none; }
+  .sb { position: absolute; border-radius: 7px; padding: 2px 6px; overflow: hidden; cursor: pointer; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.14); }
+  .sb .sb-t { font-size: 9.5px; font-weight: 700; opacity: .88; font-variant-numeric: tabular-nums; }
+  .sb .sb-title { font-size: 11px; font-weight: 650; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb.past { opacity: .62; }
+  .sb.threaded::after { content: "\2767"; position: absolute; top: 3px; right: 5px; font-size: 9px; opacity: .85; }
+  .now-line { position: absolute; left: 0; right: 0; height: 2px; background: var(--now); z-index: 3; pointer-events: none; }
+  .now-line::before { content: ""; position: absolute; left: -2px; top: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--now); }
+
   .fab {
     position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(72px + env(safe-area-inset-bottom));
     background: var(--accent); color: #fff; border: none; border-radius: 999px; height: 48px; padding: 0 22px;
@@ -348,6 +371,18 @@
     </section>
   </div>
 
+  <!-- ===================== SCHEDULE (week grid) ===================== -->
+  <div id="scheduleView" hidden>
+    <div class="daynav">
+      <button class="nav-btn" id="prevWeek2" aria-label="Previous week">‹</button>
+      <button class="nav-btn" id="nextWeek2" aria-label="Next week">›</button>
+      <span class="dlabel" id="weekLabel2"></span>
+      <button class="today-btn" id="thisWeekBtn2">This week</button>
+    </div>
+    <p class="sched-hint">Tap a block to edit it · tap an empty slot to add one.</p>
+    <div class="sched-scroll" id="schedScroll"></div>
+  </div>
+
   <div class="foot">
     <button class="btn ghost reset" id="resetBtn" style="min-height:30px;padding:0 11px;font-size:11.5px">Reset demo</button>
     <b>Thread — cockpit.</b> Your present-tense planner. Meetings are threads; the week is where
@@ -357,6 +392,7 @@
 
 <nav class="tabbar"><div class="tabbar-in">
   <button class="tab on" data-view="today"><span class="ti">◉</span>Today</button>
+  <button class="tab" data-view="schedule"><span class="ti">◷</span>Schedule</button>
   <button class="tab" data-view="week"><span class="ti">▦</span>Week</button>
 </div></nav>
 
@@ -563,7 +599,14 @@
   function flash(node, msg) { var s = el('span', 'flash', msg); node.appendChild(s); setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 2600); }
 
   // ---------- render ----------
-  function render() { if (view === 'week') renderWeek(); else renderToday(); }
+  function render() { if (view === 'week') renderWeek(); else if (view === 'schedule') renderSchedule(); else renderToday(); }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function updateWeekLabel(labelId, btnId) {
+    var end = addDays(weekStart, 6), isThis = iso(weekStart) === iso(mondayOf(new Date()));
+    var range = (weekStart.getMonth() + 1) + '/' + weekStart.getDate() + ' – ' + (end.getMonth() + 1) + '/' + end.getDate();
+    document.getElementById(labelId).innerHTML = isThis ? '<span>This week</span><span class="sub">' + range + '</span>' : '<span>' + range + '</span>';
+    document.getElementById(btnId).classList.toggle('on', isThis);
+  }
   function renderToday() {
     renderBrief();
     renderNudge();
@@ -575,11 +618,7 @@
   // ---------- Week (planner) ----------
   function renderWeek() {
     wk = loadWeek(weekStart);
-    var end = addDays(weekStart, 6);
-    var isThis = iso(weekStart) === iso(mondayOf(new Date()));
-    var range = (weekStart.getMonth() + 1) + '/' + weekStart.getDate() + ' – ' + (end.getMonth() + 1) + '/' + end.getDate();
-    document.getElementById('weekLabel').innerHTML = isThis ? '<span>This week</span><span class="sub">' + range + '</span>' : '<span>' + range + '</span>';
-    document.getElementById('thisWeekBtn').classList.toggle('on', isThis);
+    updateWeekLabel('weekLabel', 'thisWeekBtn');
     var f = document.getElementById('focus'); f.value = wk.focus || ''; autoGrow(f);
     renderChecklist(document.getElementById('priorities'), wk.priorities, 'No priorities set for this week.');
     renderChecklist(document.getElementById('todos'), wk.todos, 'Nothing on the list yet.');
@@ -618,12 +657,69 @@
   document.getElementById('nextWeek').onclick = function () { weekStart = mondayOf(addDays(weekStart, 7)); renderWeek(); };
   document.getElementById('thisWeekBtn').onclick = function () { weekStart = mondayOf(new Date()); renderWeek(); };
 
+  // ---------- Schedule (week time-grid over the shared meetings) ----------
+  var PX_PER_MIN = 0.7, SNAP = 15;
+  function schedBounds(ms) {
+    var minS = 8 * 60, maxE = 20 * 60;
+    ms.forEach(function (m) { minS = Math.min(minS, Math.floor(m.start / 60) * 60); maxE = Math.max(maxE, Math.ceil((m.start + m.dur) / 60) * 60); });
+    return { start: Math.max(0, minS), end: Math.min(1440, maxE) };
+  }
+  function layoutLanes(ms) {
+    var res = [], cluster = [], clusterEnd = -1;
+    function flush() { var n = 0, ends = []; cluster.forEach(function (m) { var lane = 0; while (lane < ends.length && ends[lane] > m.start) lane++; ends[lane] = m.start + m.dur; m.__lane = lane; }); n = ends.length; cluster.forEach(function (m) { res.push({ m: m, lane: m.__lane, lanes: n }); }); cluster = []; clusterEnd = -1; }
+    ms.forEach(function (m) { if (cluster.length && m.start >= clusterEnd) flush(); cluster.push(m); clusterEnd = Math.max(clusterEnd, m.start + m.dur); });
+    if (cluster.length) flush();
+    return res;
+  }
+  function renderSchedule() {
+    updateWeekLabel('weekLabel2', 'thisWeekBtn2');
+    var scroll = document.getElementById('schedScroll'); scroll.innerHTML = '';
+    var dates = []; for (var i = 0; i < 7; i++) dates.push(addDays(weekStart, i));
+    var dayIso = dates.map(iso), td = todayIso();
+    var weekMtgs = state.meetings.filter(function (m) { return dayIso.indexOf(m.dateIso) >= 0; });
+    var b = schedBounds(weekMtgs), H = (b.end - b.start) * PX_PER_MIN;
+    var inner = el('div', 'sched-inner');
+    var head = el('div', 'sg-head'); head.appendChild(el('div', 'sg-corner'));
+    var dows = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    dates.forEach(function (d) { var h = el('div', 'sg-day' + (iso(d) === td ? ' today' : '')); h.appendChild(el('div', 'dow', dows[(d.getDay() + 6) % 7])); h.appendChild(el('div', null, String(d.getDate()))); head.appendChild(h); });
+    inner.appendChild(head);
+    var body = el('div', 'sg-body');
+    var axis = el('div', 'time-axis'); axis.style.height = H + 'px';
+    for (var t = Math.ceil(b.start / 60) * 60; t <= b.end; t += 60) { var hr = el('div', 'hr', fmtClock(t).t + fmtClock(t).ap.toLowerCase()); hr.style.top = ((t - b.start) * PX_PER_MIN) + 'px'; axis.appendChild(hr); }
+    body.appendChild(axis);
+    dates.forEach(function (d) {
+      var diso = iso(d), col = el('div', 'day-col' + (diso === td ? ' today' : '')); col.style.height = H + 'px';
+      for (var t = Math.ceil(b.start / 60) * 60; t <= b.end; t += 60) { var ln = el('div', 'hrline'); ln.style.top = ((t - b.start) * PX_PER_MIN) + 'px'; col.appendChild(ln); }
+      var dayMs = weekMtgs.filter(function (m) { return m.dateIso === diso; }).sort(function (a, c) { return a.start - c.start || a.dur - c.dur; });
+      layoutLanes(dayMs).forEach(function (info) {
+        var m = info.m, sb = el('div', 'sb' + (statusOf(m) === 'past' ? ' past' : '') + (m.thread ? ' threaded' : ''));
+        sb.style.top = ((m.start - b.start) * PX_PER_MIN) + 'px';
+        sb.style.height = Math.max(15, m.dur * PX_PER_MIN - 2) + 'px';
+        sb.style.left = 'calc(' + (info.lane * 100 / info.lanes) + '% + 2px)';
+        sb.style.width = 'calc(' + (100 / info.lanes) + '% - 4px)';
+        sb.style.background = colorFor(m);
+        if (m.dur >= 30) sb.appendChild(el('div', 'sb-t', fmtClock(m.start).t + fmtClock(m.start).ap.toLowerCase()));
+        sb.appendChild(el('div', 'sb-title', m.title));
+        sb.onclick = function (e) { e.stopPropagation(); openEdit(m); };
+        col.appendChild(sb);
+      });
+      if (diso === td) { var n = nowMin(); if (n >= b.start && n <= b.end) { var nl = el('div', 'now-line'); nl.style.top = ((n - b.start) * PX_PER_MIN) + 'px'; col.appendChild(nl); } }
+      col.onclick = function (ev) { var rect = col.getBoundingClientRect(); var y = ev.clientY - rect.top; var mn = clamp(b.start + Math.round((y / PX_PER_MIN) / SNAP) * SNAP, 0, 1425); openAdd({ date: diso, start: mn }); };
+      body.appendChild(col);
+    });
+    inner.appendChild(body); scroll.appendChild(inner);
+  }
+  document.getElementById('prevWeek2').onclick = function () { weekStart = mondayOf(addDays(weekStart, -7)); renderSchedule(); };
+  document.getElementById('nextWeek2').onclick = function () { weekStart = mondayOf(addDays(weekStart, 7)); renderSchedule(); };
+  document.getElementById('thisWeekBtn2').onclick = function () { weekStart = mondayOf(new Date()); renderSchedule(); };
+
   // ---------- view routing ----------
   function setView(v) {
     view = v;
     document.getElementById('todayView').hidden = v !== 'today';
     document.getElementById('weekView').hidden = v !== 'week';
-    document.getElementById('addBtn').hidden = v !== 'today';
+    document.getElementById('scheduleView').hidden = v !== 'schedule';
+    document.getElementById('addBtn').hidden = !(v === 'today' || v === 'schedule');
     [].forEach.call(document.querySelectorAll('.tab'), function (t) { t.classList.toggle('on', t.dataset.view === v); });
     window.scrollTo(0, 0);
     render();
@@ -866,10 +962,14 @@
   var editingId = null;
   function $(id) { return document.getElementById(id); }
 
-  function openAdd() {
+  function openAdd(pref) {
+    pref = pref || {};
     editingId = null;
     $('sheetTitle').textContent = 'Add a meeting';
-    $('fTitle').value = ''; $('fDate').value = viewed; $('fStart').value = '09:00'; $('fDur').value = '30'; $('fRepeat').value = 'weekly';
+    $('fTitle').value = '';
+    $('fDate').value = pref.date || (view === 'schedule' ? iso(weekStart) : viewed);
+    $('fStart').value = pref.start != null ? minToTime(pref.start) : '09:00';
+    $('fDur').value = '30'; $('fRepeat').value = pref.start != null ? 'none' : 'weekly';
     $('repeatFld').hidden = false; $('repeatHint').hidden = false;
     $('scopeRow').hidden = true; $('delWrap').hidden = true;
     $('addErr').style.display = 'none'; $('addSave').textContent = 'Add';
