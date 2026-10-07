@@ -49,7 +49,7 @@
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    padding: max(18px, env(safe-area-inset-top)) 16px calc(112px + env(safe-area-inset-bottom));
+    padding: max(18px, env(safe-area-inset-top)) 16px calc(142px + env(safe-area-inset-bottom));
     -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: var(--maxw); margin: 0 auto; }
@@ -224,8 +224,44 @@
   .owe-clear { font-size: 13px; color: var(--ink-3); padding: 16px; text-align: center; }
 
   /* ---- Add button + sheet ---- */
+  /* ---- Bottom tab bar ---- */
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; justify-content: center;
+    background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: saturate(1.4) blur(8px);
+    border-top: 1px solid var(--line); padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+  }
+  .tabbar-in { display: flex; width: 100%; max-width: 420px; gap: 6px; }
+  .tab {
+    flex: 1; border: none; background: none; color: var(--ink-3); cursor: pointer; border-radius: 11px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; font-weight: 700; padding: 7px 0;
+  }
+  .tab .ti { font-size: 16px; line-height: 1; }
+  .tab.on { color: var(--accent-ink); background: var(--accent-soft); }
+
+  /* ---- Week planner ---- */
+  .pcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh); padding: 16px; margin-bottom: 12px; }
+  .pcard-k { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 11px; }
+  .focus-ta { width: 100%; border: none; background: transparent; color: var(--ink); font: 16px/1.5 inherit; resize: none; outline: none; min-height: 24px; }
+  .add-line { display: flex; gap: 8px; margin-top: 11px; }
+  .add-line input { flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: var(--r-sm); background: var(--bg); color: var(--ink); padding: 9px 11px; font-size: 14px; outline: none; min-height: 40px; }
+  .add-line input:focus { border-color: var(--accent); }
+  .add-plus { flex: none; width: 42px; border: none; border-radius: var(--r-sm); background: var(--accent); color: #fff; font-size: 19px; line-height: 1; cursor: pointer; }
+  .add-plus:hover { filter: brightness(1.08); }
+  .citem { display: flex; align-items: flex-start; gap: 11px; padding: 9px 0; border-top: 1px solid var(--line-2); }
+  .citem:first-child { border-top: none; }
+  .cbox { flex: none; width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--ink-3); cursor: pointer; display: grid; place-items: center; font-size: 12px; font-weight: 900; color: #fff; background: var(--surface); margin-top: 1px; transition: all .12s; }
+  .cbox.done { background: var(--done); border-color: var(--done); }
+  .cbox.missed { background: var(--now); border-color: var(--now); }
+  .ctext { flex: 1; min-width: 0; border: none; background: transparent; color: var(--ink); font: 14.5px/1.4 inherit; resize: none; outline: none; min-height: 20px; padding: 0; }
+  .citem.st-done .ctext { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--done); }
+  .citem.st-missed .ctext { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--now); }
+  .carry { flex: none; font-size: 11px; color: var(--ink-3); margin-top: 2px; cursor: default; }
+  .cdel { flex: none; border: none; background: none; color: var(--ink-3); cursor: pointer; font-size: 14px; width: 26px; height: 26px; border-radius: 50%; margin-top: -2px; }
+  .cdel:hover { color: var(--now); }
+  .empty-list { font-size: 13px; color: var(--ink-3); padding: 2px 0 2px; }
+
   .fab {
-    position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom));
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(72px + env(safe-area-inset-bottom));
     background: var(--accent); color: #fff; border: none; border-radius: 999px; height: 48px; padding: 0 22px;
     font-size: 14.5px; font-weight: 700; cursor: pointer; box-shadow: var(--sh-lg); display: inline-flex; align-items: center; gap: 8px; z-index: 20;
   }
@@ -268,29 +304,61 @@
     <span class="tag" id="clock">—</span>
   </div>
 
-  <div class="brief" id="brief"></div>
+  <!-- ===================== TODAY (cockpit) ===================== -->
+  <div id="todayView">
+    <div class="brief" id="brief"></div>
+    <div class="nudge" id="nudge" hidden></div>
+    <div class="notify-note" id="notifyNote" hidden></div>
 
-  <div class="nudge" id="nudge" hidden></div>
-  <div class="notify-note" id="notifyNote" hidden></div>
+    <div class="daynav">
+      <button class="nav-btn" id="prevDay" aria-label="Previous day">‹</button>
+      <button class="nav-btn" id="nextDay" aria-label="Next day">›</button>
+      <span class="dlabel" id="dayLabel"></span>
+      <button class="today-btn" id="todayBtn">Today</button>
+    </div>
 
-  <div class="daynav">
-    <button class="nav-btn" id="prevDay" aria-label="Previous day">‹</button>
-    <button class="nav-btn" id="nextDay" aria-label="Next day">›</button>
-    <span class="dlabel" id="dayLabel"></span>
-    <button class="today-btn" id="todayBtn">Today</button>
+    <div class="agenda" id="agenda"></div>
+    <div class="owe-sec" id="oweSec"></div>
   </div>
 
-  <div class="agenda" id="agenda"></div>
+  <!-- ===================== WEEK (planner) ===================== -->
+  <div id="weekView" hidden>
+    <div class="daynav">
+      <button class="nav-btn" id="prevWeek" aria-label="Previous week">‹</button>
+      <button class="nav-btn" id="nextWeek" aria-label="Next week">›</button>
+      <span class="dlabel" id="weekLabel"></span>
+      <button class="today-btn" id="thisWeekBtn">This week</button>
+    </div>
 
-  <div class="owe-sec" id="oweSec"></div>
+    <section class="pcard">
+      <div class="pcard-k">Weekly focus</div>
+      <textarea id="focus" class="focus-ta" rows="1" placeholder="What matters most this week?"></textarea>
+    </section>
+
+    <section class="pcard">
+      <div class="pcard-k">Top priorities</div>
+      <div id="priorities"></div>
+      <div class="add-line"><input id="prioAdd" placeholder="Add a priority" maxlength="100"><button class="add-plus" id="prioAddBtn" aria-label="Add priority">＋</button></div>
+    </section>
+
+    <section class="pcard">
+      <div class="pcard-k">To-dos</div>
+      <div id="todos"></div>
+      <div class="add-line"><input id="todoAdd" placeholder="Add a to-do" maxlength="120"><button class="add-plus" id="todoAddBtn" aria-label="Add to-do">＋</button></div>
+    </section>
+  </div>
 
   <div class="foot">
     <button class="btn ghost reset" id="resetBtn" style="min-height:30px;padding:0 11px;font-size:11.5px">Reset demo</button>
-    <b>Thread v2 — cockpit.</b> Today, anchored to now. Recurring meetings are threads:
-    distil a transcript and the next one opens knowing where you left off. Action items carry
-    forward until done. Everything stays on this device.
+    <b>Thread — cockpit.</b> Your present-tense planner. Meetings are threads; the week is where
+    you set intentions. Everything stays on this device.
   </div>
 </div>
+
+<nav class="tabbar"><div class="tabbar-in">
+  <button class="tab on" data-view="today"><span class="ti">◉</span>Today</button>
+  <button class="tab" data-view="week"><span class="ti">▦</span>Week</button>
+</div></nav>
 
 <button class="fab" id="addBtn">＋ Meeting</button>
 
@@ -357,6 +425,15 @@
   function timeToMin(v) { var m = /^(\d{1,2}):(\d{2})$/.exec(v || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; }
   function minToTime(min) { return String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0'); }
   function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+  function mondayOf(d) { var x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
+  function autoGrow(t) { t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }
+  // Per-week planner data (focus / priorities / to-dos), keyed by the week's Monday.
+  function wkKey(ws) { return 'thread-wk-' + iso(ws); }
+  function loadWeek(ws) { try { var w = JSON.parse(localStorage.getItem(wkKey(ws))); if (w) { w.focus = w.focus || ''; w.priorities = w.priorities || []; w.todos = w.todos || []; return w; } } catch (e) {} return { focus: '', priorities: [], todos: [] }; }
+  function saveWeek(ws, w) { try { localStorage.setItem(wkKey(ws), JSON.stringify(w)); } catch (e) {} }
+  var view = 'today';
+  var weekStart = mondayOf(new Date());
+  var wk = loadWeek(weekStart);
 
   // ---------- sample content ----------
   var SAMPLE_TRANSCRIPT =
@@ -486,13 +563,72 @@
   function flash(node, msg) { var s = el('span', 'flash', msg); node.appendChild(s); setTimeout(function () { if (s.parentNode) s.parentNode.removeChild(s); }, 2600); }
 
   // ---------- render ----------
-  function render() {
+  function render() { if (view === 'week') renderWeek(); else renderToday(); }
+  function renderToday() {
     renderBrief();
     renderNudge();
     renderDayNav();
     renderAgenda();
     renderOwe();
   }
+
+  // ---------- Week (planner) ----------
+  function renderWeek() {
+    wk = loadWeek(weekStart);
+    var end = addDays(weekStart, 6);
+    var isThis = iso(weekStart) === iso(mondayOf(new Date()));
+    var range = (weekStart.getMonth() + 1) + '/' + weekStart.getDate() + ' – ' + (end.getMonth() + 1) + '/' + end.getDate();
+    document.getElementById('weekLabel').innerHTML = isThis ? '<span>This week</span><span class="sub">' + range + '</span>' : '<span>' + range + '</span>';
+    document.getElementById('thisWeekBtn').classList.toggle('on', isThis);
+    var f = document.getElementById('focus'); f.value = wk.focus || ''; autoGrow(f);
+    renderChecklist(document.getElementById('priorities'), wk.priorities, 'No priorities set for this week.');
+    renderChecklist(document.getElementById('todos'), wk.todos, 'Nothing on the list yet.');
+  }
+  function renderChecklist(container, items, emptyMsg) {
+    container.innerHTML = '';
+    if (!items.length) { container.appendChild(el('div', 'empty-list', emptyMsg)); return; }
+    items.forEach(function (item, i) {
+      var row = el('div', 'citem' + (item.status ? ' st-' + item.status : ''));
+      var box = el('div', 'cbox ' + (item.status || ''), item.status === 'done' ? '✓' : item.status === 'missed' ? '✕' : '');
+      box.title = 'done → missed → clear';
+      box.onclick = function () { item.status = item.status === '' ? 'done' : item.status === 'done' ? 'missed' : ''; saveWeek(weekStart, wk); renderWeek(); };
+      row.appendChild(box);
+      var ta = el('textarea', 'ctext'); ta.rows = 1; ta.value = item.text;
+      ta.oninput = function () { item.text = ta.value; autoGrow(ta); saveWeek(weekStart, wk); };
+      ta.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); ta.blur(); } };
+      row.appendChild(ta);
+      if (item.carried) { var c = el('span', 'carry', '↩'); c.title = 'Carried over, unfinished, from last week'; row.appendChild(c); }
+      var del = el('button', 'cdel', '✕'); del.setAttribute('aria-label', 'Delete');
+      del.onclick = function () { items.splice(i, 1); saveWeek(weekStart, wk); renderWeek(); };
+      row.appendChild(del);
+      container.appendChild(row);
+    });
+    container.querySelectorAll('.ctext').forEach(autoGrow);
+  }
+  function wireAdd(inputId, btnId, listGetter) {
+    var inp = document.getElementById(inputId);
+    function commit() { var t = inp.value.trim(); if (!t) return; listGetter().push({ text: t, status: '' }); inp.value = ''; saveWeek(weekStart, wk); renderWeek(); inp.focus(); }
+    document.getElementById(btnId).onclick = commit;
+    inp.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); commit(); } };
+  }
+  wireAdd('prioAdd', 'prioAddBtn', function () { return wk.priorities; });
+  wireAdd('todoAdd', 'todoAddBtn', function () { return wk.todos; });
+  document.getElementById('focus').addEventListener('input', function (e) { wk.focus = e.target.value; autoGrow(e.target); saveWeek(weekStart, wk); });
+  document.getElementById('prevWeek').onclick = function () { weekStart = mondayOf(addDays(weekStart, -7)); renderWeek(); };
+  document.getElementById('nextWeek').onclick = function () { weekStart = mondayOf(addDays(weekStart, 7)); renderWeek(); };
+  document.getElementById('thisWeekBtn').onclick = function () { weekStart = mondayOf(new Date()); renderWeek(); };
+
+  // ---------- view routing ----------
+  function setView(v) {
+    view = v;
+    document.getElementById('todayView').hidden = v !== 'today';
+    document.getElementById('weekView').hidden = v !== 'week';
+    document.getElementById('addBtn').hidden = v !== 'today';
+    [].forEach.call(document.querySelectorAll('.tab'), function (t) { t.classList.toggle('on', t.dataset.view === v); });
+    window.scrollTo(0, 0);
+    render();
+  }
+  [].forEach.call(document.querySelectorAll('.tab'), function (t) { t.onclick = function () { setView(t.dataset.view); }; });
 
   function renderBrief() {
     var b = document.getElementById('brief');
