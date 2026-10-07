@@ -1,5 +1,5 @@
 // Offline shell for Thread (v2). Bump CACHE to force a refresh of the shell.
-const CACHE = 'thread-v2-8';
+const CACHE = 'thread-v2-9';
 const ASSETS = [
   './',
   './index.html',

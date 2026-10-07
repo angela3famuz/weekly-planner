@@ -364,6 +364,21 @@
   .cat-list-row input[type=color] { width: 36px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; flex: none; }
   .cat-list-row input[type=text] { flex: 1; }
   .cat-list-row .cdel { flex: none; border: none; background: none; color: var(--ink-3); font-size: 16px; cursor: pointer; padding: 4px; }
+  /* weekly productivity */
+  .prod-score { display: flex; align-items: baseline; gap: 9px; margin-bottom: 9px; }
+  .prod-pct { font-size: 30px; font-weight: 800; color: var(--accent-ink); line-height: 1; }
+  .prod-pct.none { font-size: 22px; color: var(--ink-3); }
+  .prod-cap { font-size: 12px; color: var(--ink-2); }
+  .prod-bar { height: 7px; border-radius: 4px; background: var(--line); overflow: hidden; margin-bottom: 12px; display: flex; }
+  .prod-bar i { display: block; height: 100%; }
+  .prod-bar .pd { background: var(--done); }
+  .prod-bar .pm { background: var(--now); }
+  .prod-stat { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line-2); }
+  .prod-stat .k { color: var(--ink); font-weight: 600; }
+  .prod-tags { color: var(--ink-3); }
+  .prod-tags .d { color: var(--done); font-weight: 700; }
+  .prod-tags .m { color: var(--now); font-weight: 700; }
+  .prod-tags .sep { color: var(--line); margin: 0 5px; }
   .codebox { display: flex; align-items: center; gap: 8px; }
   .codebox code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 12px; background: var(--line-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; color: var(--ink-2); }
 </style>
@@ -408,6 +423,11 @@
       <span class="dlabel" id="weekLabel"></span>
       <button class="today-btn" id="thisWeekBtn">This week</button>
     </div>
+
+    <section class="pcard" id="prodCard">
+      <div class="pcard-k">This week</div>
+      <div id="prodBody"></div>
+    </section>
 
     <section class="pcard">
       <div class="pcard-k">Weekly focus</div>
@@ -821,12 +841,56 @@
   function renderWeek() {
     wk = loadWeek(weekStart);
     maybeCarryOver();
+    renderProductivity();
     updateWeekLabel('weekLabel', 'thisWeekBtn');
     var f = document.getElementById('focus'); f.value = wk.focus || ''; autoGrow(f);
     renderChecklist(document.getElementById('priorities'), wk.priorities, 'No priorities set for this week.');
     renderChecklist(document.getElementById('todos'), wk.todos, 'Nothing on the list yet.');
     renderHabits();
     var nt = document.getElementById('notes'); nt.value = wk.notes || ''; autoGrow(nt);
+  }
+  // Weekly productivity: completed vs missed across this week's meetings and tasks.
+  function renderProductivity() {
+    var body = $('prodBody'); body.innerHTML = '';
+    var ws = iso(weekStart), we = iso(addDays(weekStart, 6));
+    var ms = state.meetings.filter(function (m) { return m.dateIso >= ws && m.dateIso <= we; });
+    var mDone = 0, mMissed = 0, mPastUnmarked = 0, mUpcoming = 0;
+    ms.forEach(function (m) {
+      if (m.status === 'done') mDone++;
+      else if (m.status === 'missed') mMissed++;
+      else if (statusOf(m) === 'past') mPastUnmarked++;
+      else mUpcoming++;
+    });
+    var tasks = (wk.priorities || []).concat(wk.todos || []);
+    var tDone = 0, tMissed = 0, tOpen = 0;
+    tasks.forEach(function (it) { if (it.status === 'done') tDone++; else if (it.status === 'missed') tMissed++; else tOpen++; });
+
+    if (!ms.length && !tasks.length) { body.appendChild(el('div', 'empty-note', 'Nothing to measure yet — add meetings or tasks for this week.')); return; }
+
+    var done = mDone + tDone, missed = mMissed + tMissed;
+    var rate = (done + missed) ? Math.round(100 * done / (done + missed)) : null;
+
+    var score = el('div', 'prod-score');
+    score.appendChild(el('div', 'prod-pct' + (rate == null ? ' none' : ''), rate == null ? 'No data yet' : rate + '%'));
+    if (rate != null) score.appendChild(el('div', 'prod-cap', 'of what you closed out, completed'));
+    body.appendChild(score);
+
+    var openCount = mPastUnmarked + tOpen, denom = done + missed + openCount, bar = el('div', 'prod-bar');
+    if (denom) {
+      var di = el('i', 'pd'); di.style.width = (100 * done / denom) + '%'; bar.appendChild(di);
+      var mi = el('i', 'pm'); mi.style.width = (100 * missed / denom) + '%'; bar.appendChild(mi);
+    }
+    body.appendChild(bar);
+
+    function statRow(label, d, m, oLabel, o) {
+      var row = el('div', 'prod-stat');
+      row.appendChild(el('div', 'k', label));
+      var tags = el('div', 'prod-tags');
+      tags.innerHTML = '<span class="d">' + d + ' done</span><span class="sep">·</span><span class="m">' + m + ' missed</span>' + (oLabel && o ? '<span class="sep">·</span><span>' + o + ' ' + oLabel + '</span>' : '');
+      row.appendChild(tags); return row;
+    }
+    body.appendChild(statRow('Meetings', mDone, mMissed, mPastUnmarked ? 'to mark' : 'upcoming', mPastUnmarked || mUpcoming));
+    body.appendChild(statRow('Tasks', tDone, tMissed, 'open', tOpen));
   }
   function renderHabits() {
     var wrap = document.getElementById('habits'); wrap.innerHTML = '';
