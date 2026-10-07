@@ -334,6 +334,10 @@
   .foot-tools { display: block; margin-bottom: 8px; }
   .foot-flash { color: var(--done); font-weight: 700; font-size: 11.5px; }
   .sync-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 3px; vertical-align: middle; }
+  .demo-hint { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: var(--r); padding: 12px 14px; margin-bottom: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+  .demo-hint-txt { flex: 1 1 200px; font-size: 13px; line-height: 1.45; color: var(--ink-2); }
+  .demo-hint-txt b { color: var(--ink); }
+  .demo-hint-btns { display: flex; gap: 8px; flex: none; }
   .interval-row { display: flex; align-items: center; gap: 10px; }
   .interval-row input { width: 92px; flex: none; }
   .interval-row span { color: var(--ink-2); font-size: 14px; }
@@ -351,6 +355,13 @@
 
   <!-- ===================== TODAY (cockpit) ===================== -->
   <div id="todayView">
+    <div class="demo-hint" id="demoHint" hidden>
+      <div class="demo-hint-txt"><b>You’re looking at sample data.</b> Turn on Sync or restore a backup to load your own.</div>
+      <div class="demo-hint-btns">
+        <button class="btn primary sm" id="demoSync">Turn on sync</button>
+        <button class="btn ghost sm" id="demoRestore">Restore backup</button>
+      </div>
+    </div>
     <div class="brief" id="brief"></div>
     <div class="nudge" id="nudge" hidden></div>
     <div class="notify-note" id="notifyNote" hidden></div>
@@ -732,12 +743,15 @@
     document.getElementById(btnId).classList.toggle('on', isThis);
   }
   function renderToday() {
+    document.getElementById('demoHint').hidden = !state.demo; // sample-data notice; clears with real data
     renderBrief();
     renderNudge();
     renderDayNav();
     renderAgenda();
     renderOwe();
   }
+  document.getElementById('demoSync').onclick = function () { document.getElementById('syncBtn').click(); };
+  document.getElementById('demoRestore').onclick = function () { document.getElementById('restoreBtn').click(); };
 
   // ---------- Week (planner) ----------
   // The first time the current week is opened, unfinished priorities/to-dos
