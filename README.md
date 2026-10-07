@@ -111,28 +111,34 @@ and unticked by default. Tick what you want and add it.
 
 ## Sync across devices
 
-Optional, and off until you turn it on. Without it the planner is exactly what it was:
-local, offline, nothing uploaded.
+Sync lives in **[Thread (v2)](v2/)**, the reworked planner in `v2/`. It's optional and off
+until you turn it on; without it everything is local, offline, and nothing is uploaded.
 
-**⋯ → Sync across devices** — paste your server address and passphrase, once per device.
-After that it syncs on its own: on opening the app, when you come back to it, when you come
-back online, and a second or so after you stop typing. There's a **Sync now** button if you
-want to force it, and a quiet dot on the **⋯** button when something is waiting to upload.
-
-Deploying the server is a separate job — see [`server/README.md`](server/README.md).
+It syncs through **one private GitHub gist** — no server to run or pay for. You paste a GitHub
+token (classic, with only the `gist` scope) once per device, optionally set a passphrase that
+encrypts your data so GitHub only ever holds ciphertext, and carry a short **sync code** to your
+other devices. Full setup is in [`v2/README.md`](v2/README.md#sync-across-devices). After that it
+syncs on its own — on opening the app, when you refocus it, when you come back online, and a
+couple of seconds after you stop typing — plus a **Sync now** button and a quiet dot when
+something is waiting to go up.
 
 What to expect:
 
-- **Your device is the source of truth.** The server is a replica. Everything works offline;
-  changes queue and go up when you reconnect.
-- **The whole week is the unit.** Editing the *same week* on two devices means the later edit
-  wins and the other device's changes to that week are lost. For one person with two devices
-  that's rarely reachable — but it's real, and the planner tells you when it happens rather
-  than hiding it. See [`docs/sync-design.md`](docs/sync-design.md) §7.
-- **Nothing can be destroyed by a sync failure.** A wrong passphrase, a dead token, a server
-  that's down — all leave your local data untouched and the planner working.
-- **The server keeps every version**, so an accidental delete is recoverable — which is the
-  bit that lets manual backups stop being your safety net.
+- **Your device is the source of truth.** The gist is a shared replica. Everything works offline;
+  changes go up when you reconnect.
+- **Merging is per item, not per week.** Each sync 3-way merges against the last-synced snapshot,
+  so an add, a delete and an edit are told apart per meeting, per week and per habit — a meeting
+  added on your phone and a transcript distilled on your laptop both survive. Editing the *same*
+  item on two devices before they sync is the only conflict; this device wins and Thread tells
+  you, rather than losing a change silently.
+- **Nothing can be destroyed by a sync failure.** A wrong token, a wrong passphrase, GitHub being
+  unreachable — all leave your local data untouched and the planner working.
+- **GitHub keeps every version** of the gist, so an accidental delete is recoverable from its
+  revision history — the bit that lets manual backups stop being your only safety net.
+
+> An earlier design synced through a self-hosted server (Postgres on Railway) — see
+> [`docs/sync-design.md`](docs/sync-design.md) and [`server/`](server/). It was built out but
+> never deployed; the gist-based sync above replaced it, so no server is needed.
 
 ## Backup & restore
 
@@ -147,10 +153,10 @@ Restoring takes a file or pasted text, tells you what's in it, then offers two c
 - **Replace all** — the backup becomes the truth: a week it doesn't have is deleted, not
   merely skipped. Asks for confirmation.
 
-**With sync on, Replace all replaces every device, not just this one.** A week the backup
-lacks is deleted on the iPad too. That is the point of it, but it is worth knowing before
-reaching for it. The current week is emptied rather than deleted, because the app always
-needs one.
+**If you've turned on sync (in Thread), a Replace-all also reaches your other devices on the
+next sync** — weeks the backup lacks are removed there too. That is the point of it, but it is
+worth knowing before reaching for it. The current week is emptied rather than deleted, because
+the app always needs one.
 
 Either way, **Undo** appears straight afterwards and puts back exactly what was there —
 on every synced device, by the same path the restore took. It survives a reload, but it is
@@ -169,7 +175,9 @@ one-time export/import is the only bridge).
 | `sw.js` | Service worker. Network-first for the page, cache-first for icons. |
 | `icons/` | Generated PNGs. iOS only accepts PNG for `apple-touch-icon`. |
 | `tools/make-icons.js` | Regenerates `icons/` — dependency-free rasterizer. |
-| `docs/sync-design.md` | Proposal for cross-device sync. Nothing built yet. |
+| `v2/` | Thread — the reworked planner, with gist-based cross-device sync. See [`v2/README.md`](v2/README.md). |
+| `docs/sync-design.md` | Earlier server-based sync design. Superseded by the gist sync in `v2/`. |
+| `server/` | The self-hosted sync server from that earlier design. Built but not deployed. |
 
 ## Regenerating the icons
 
