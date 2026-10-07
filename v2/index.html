@@ -1763,6 +1763,19 @@
     var weeks = data.weeks || {}, mAdded = 0, wAdded = 0;
     var di = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
     var dn = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun', next: 'Next week' };
+    // ---- bring v1 categories across, and remember how to map a colour → a category ----
+    var v1cats = Array.isArray(data.cats) ? data.cats : [];
+    var cats = getCats(), byId = {}; cats.forEach(function (c) { byId[c.id] = c; });
+    var colorToCat = {};
+    v1cats.forEach(function (c) {
+      if (!c || c.id == null) return;
+      var id = String(c.id), name = String(c.name || id).slice(0, 24), color = c.color || COLORS[cats.length % COLORS.length];
+      if (byId[id]) { byId[id].name = name; byId[id].color = color; }       // v1 wins for its own ids
+      else { var nc = { id: id, name: name, color: color }; cats.push(nc); byId[id] = nc; }
+      if (color) colorToCat[String(color).toLowerCase()] = id;
+    });
+    cats.forEach(function (c) { if (c.color) { var k = String(c.color).toLowerCase(); if (!colorToCat[k]) colorToCat[k] = c.id; } });
+    function resolveCat(b) { if (b.cat != null && byId[String(b.cat)]) return String(b.cat); if (b.color) return colorToCat[String(b.color).toLowerCase()] || ''; return ''; }
     Object.keys(weeks).forEach(function (isoKey) {
       var v1w = weeks[isoKey]; if (!v1w || !/^\d{4}-\d{2}-\d{2}$/.test(isoKey)) return;
       var ws = parseIso(isoKey), v2w = loadWeek(ws);
@@ -1779,14 +1792,25 @@
         var dur = (b.end > b.start ? b.end : 1440) - b.start; if (!(dur > 0)) dur = 30; if (dur >= 1440) dur = 1439;
         var title = b.text || 'Meeting';
         if (state.meetings.some(function (m) { return m.dateIso === diso && m.start === b.start && m.title === title; })) return;
-        state.meetings.push({ id: 'm' + uid(), seriesId: null, title: title, dateIso: diso, start: b.start, dur: dur, color: b.color || null, status: b.status || '', transcript: '', thread: null, draftReply: '', showReply: false, expanded: false });
+        state.meetings.push({ id: 'm' + uid(), seriesId: null, title: title, dateIso: diso, start: b.start, dur: dur, color: b.color || null, cat: resolveCat(b), status: b.status || '', transcript: '', thread: null, draftReply: '', showReply: false, expanded: false });
         mAdded++;
       });
     });
+    // Retro-map already-present meetings (have a colour, no category) by colour match.
+    state.meetings.forEach(function (m) { if (!m.cat && m.color) { var cid = colorToCat[String(m.color).toLowerCase()]; if (cid) m.cat = cid; } });
+    // Drop unused default seed categories once real v1 categories are in.
+    if (v1cats.length) {
+      var used = {}; state.meetings.forEach(function (m) { if (m.cat) used[m.cat] = 1; });
+      var v1ids = {}; v1cats.forEach(function (c) { if (c && c.id != null) v1ids[String(c.id)] = 1; });
+      cats = cats.filter(function (c) { return !((c.id === 'personal' || c.id === 'work') && !used[c.id] && !v1ids[c.id]); });
+    }
+    if (data.activeCat != null && byId[String(data.activeCat)]) setActiveCat(String(data.activeCat));
+    saveCats(cats);
+    var tagged = state.meetings.filter(function (m) { return m.cat; }).length;
     var v2h = getHabits(), have = {}; v2h.forEach(function (h) { have[h.id] = 1; });
     (data.habits || []).forEach(function (h) { if (h && h.deleted) return; var hh = typeof h === 'string' ? { id: h, name: h } : { id: String(h.id), name: String(h.name || '') }; if (hh.id && hh.name && !have[hh.id]) { v2h.push(hh); have[hh.id] = 1; } });
     saveHabits(v2h); save();
-    return { weeks: wAdded, meetings: mAdded };
+    return { weeks: wAdded, meetings: mAdded, cats: v1cats.length, tagged: tagged };
   }
   document.getElementById('restoreBtn').onclick = function () { document.getElementById('restoreFile').click(); };
   document.getElementById('restoreFile').onchange = function () {
@@ -1795,10 +1819,11 @@
     reader.onload = function () {
       var data; try { data = JSON.parse(reader.result); } catch (e) { footFlash('That file is not valid JSON.', true); return; }
       if (data && data.app === 'weekly-planner') {
-        if (!confirm('Bring your v1 Weekly Planner backup into Thread? Your current Thread data is kept — v1 weeks, schedule blocks and habits are added in.')) return;
+        if (!confirm('Bring your v1 Weekly Planner backup into Thread? Your current Thread data is kept — v1 weeks, schedule blocks, habits and categories are added in, and existing meetings get colour-matched to your categories.')) return;
         var r; try { r = migrateFromV1(data); } catch (e) { footFlash('Migration failed.', true); return; }
         viewed = todayIso(); weekStart = mondayOf(new Date()); wk = loadWeek(weekStart);
-        footFlash('Imported from v1: ' + r.meetings + ' meeting' + (r.meetings === 1 ? '' : 's') + ', ' + r.weeks + ' week' + (r.weeks === 1 ? '' : 's') + '.');
+        var msg = 'Imported from v1: ' + r.meetings + ' meeting' + (r.meetings === 1 ? '' : 's') + ', ' + r.weeks + ' week' + (r.weeks === 1 ? '' : 's') + (r.cats ? ', ' + r.cats + ' categor' + (r.cats === 1 ? 'y' : 'ies') + ' (' + r.tagged + ' meeting' + (r.tagged === 1 ? '' : 's') + ' tagged)' : '') + '.';
+        footFlash(msg);
         render(); return;
       }
       if (!data || data.app !== 'thread' || !data.meetings) { footFlash('That is not a Thread or Weekly Planner backup.', true); return; }
