@@ -668,6 +668,7 @@
         <div class="codebox"><code id="syncCodeOut"></code><button class="btn sm" id="syncCopy">Copy</button></div>
       </div>
       <p class="hint" id="syncOnNote"></p>
+      <label class="chkline" id="widgetRow"><input type="checkbox" id="syncWidget"><span>Publish a home-screen <b>widget feed</b> — upcoming meetings, stored <b>unencrypted</b> in the gist so a Scriptable widget can read them.</span></label>
     </div>
 
     <div class="sheet-btns">
@@ -2191,17 +2192,29 @@
       });
     });
   }
+  // A small, unencrypted feed of upcoming meetings for a home-screen widget (opt-in).
+  function buildWidgetFeed() {
+    var today = todayIso(), end = iso(addDays(new Date(), 2)), ups = [];
+    state.meetings.forEach(function (m) {
+      if (m.dateIso < today || m.dateIso > end) return;
+      ups.push({ title: m.title, date: m.dateIso, start: m.start, dur: m.dur, color: colorFor(m), status: m.status || '' });
+    });
+    ups.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.start - b.start; });
+    return { app: 'thread-widget', v: 1, updated: Date.now(), name: ME, meetings: ups.slice(0, 40) };
+  }
   function ghPush(merged) {
     return serializeDoc(merged).then(function (content) {
-      var files = { files: { 'thread-sync.json': { content: content } } };
+      var f = { 'thread-sync.json': { content: content } };
+      if (cfg.widget) f['thread-widget.json'] = { content: JSON.stringify(buildWidgetFeed()) };
       if (!cfg.gistId) {
-        var body = { description: 'Thread sync — do not edit by hand', public: false, files: files.files };
+        var body = { description: 'Thread sync — do not edit by hand', public: false, files: f };
         return fetch(GH + '/gists', { method: 'POST', headers: ghHeaders(), body: JSON.stringify(body) }).then(function (res) {
           if (!res.ok) throw new Error(ghErr(res.status));
           return res.json().then(function (j) { cfg.gistId = j.id; saveCfg(); });
         });
       }
-      return fetch(GH + '/gists/' + cfg.gistId, { method: 'PATCH', headers: ghHeaders(), body: JSON.stringify(files) }).then(function (res) {
+      if (!cfg.widget) f['thread-widget.json'] = null; // remove the feed when the toggle is off
+      return fetch(GH + '/gists/' + cfg.gistId, { method: 'PATCH', headers: ghHeaders(), body: JSON.stringify({ files: f }) }).then(function (res) {
         if (res.status === 404) { cfg.gistId = ''; saveCfg(); return ghPush(merged); }
         if (!res.ok) throw new Error(ghErr(res.status));
       });
@@ -2284,6 +2297,7 @@
       $('syncCodeOut').textContent = cfg.gistId || '(creating…)';
       $('syncStatus').textContent = syncing ? 'Syncing…' : cfg.lastError ? ('Last sync failed: ' + cfg.lastError) : cfg.lastSync ? ('On · synced ' + ago(cfg.lastSync)) : 'On · not synced yet';
       $('syncOnNote').textContent = (cfg.pass ? 'Encrypted with your passphrase — GitHub can’t read it. ' : 'Not encrypted. ') + 'On another device: open Sync, paste a token, the same passphrase, and this code.';
+      $('syncWidget').checked = !!cfg.widget;
     } else {
       $('syncSetup').hidden = false; $('syncOn').hidden = true; $('syncOff').hidden = true; $('syncGo').textContent = 'Turn on sync';
       $('syncStatus').textContent = 'Off. Your data stays on this device only.';
@@ -2293,6 +2307,7 @@
   $('syncClose').onclick = function () { $('syncOverlay').classList.remove('open'); };
   $('syncOverlay').onclick = function (e) { if (e.target === this) this.classList.remove('open'); };
   $('syncCopy').onclick = function () { if (!cfg.gistId) return; try { navigator.clipboard.writeText(cfg.gistId).then(function () { footFlash('Sync code copied.'); }, function () {}); } catch (e) {} };
+  $('syncWidget').onchange = function () { cfg.widget = $('syncWidget').checked; saveCfg(); footFlash(cfg.widget ? 'Publishing widget feed…' : 'Removing widget feed…'); doSync(true); };
   $('syncOff').onclick = function () {
     if (!confirm('Disconnect sync on this device? Your data stays here — it just stops syncing. The gist on GitHub is left alone (delete it there if you want it gone).')) return;
     cfg = { on: false, token: '', gistId: '', pass: '', lastSync: 0, lastError: '' }; saveCfg();
