@@ -10,7 +10,9 @@ through a private GitHub gist — there's no server. See [`v2/README.md`](v2/REA
 Thread is a present-tense planner: meetings are *threads* (distil a transcript and the next
 one opens knowing where you left off), plus a weekly cockpit, a schedule grid, colour-coded
 categories, meeting done/missed tracking, a weekly productivity view, `.ics` and photo import,
-reminders, and cross-device sync. Full details are in [`v2/README.md`](v2/README.md).
+reminders, cross-device sync, and an optional iOS home-screen widget (via
+[Scriptable](https://scriptable.app), see [`v2/widget/`](v2/widget/)). Full details are in
+[`v2/README.md`](v2/README.md).
 
 Open it: **https://angela3famuz.github.io/weekly-planner/v2/**
 

@@ -57,6 +57,21 @@ per habit:
   leaves the gist on GitHub alone. Delete the gist on github.com if you want it gone everywhere.
 - The whole state is small (hundreds of KB), so it fits comfortably in one gist file.
 
+## Home-screen widget (iOS)
+
+A PWA can't supply a native iOS home-screen widget, but [Scriptable](https://scriptable.app)
+can — and Thread can hand it the data. With sync on, **Sync → "Publish a home-screen widget
+feed"** writes a small `thread-widget.json` into your gist (the next ~3 days of meetings — title,
+time, category colour, status), and the Scriptable widget in [`widget/`](widget/) reads just that
+file to show your upcoming meetings on the home screen (tappable to open Thread).
+
+The feed is stored **unencrypted** in your (secret, token-gated) gist — that's the trade-off that
+lets a widget read it without the slow passphrase key-derivation; the rest of your data stays
+encrypted, and turning the toggle off removes the feed. Full setup is in
+[`widget/README.md`](widget/README.md). iOS controls the refresh cadence (~15–60 min), so the
+widget reflects your last sync, not live edits. A truly always-live widget would need a native
+WidgetKit app wrapping Thread.
+
 ## Files
 
 | File | Purpose |
@@ -65,3 +80,4 @@ per habit:
 | `manifest.webmanifest` | Install metadata. |
 | `sw.js` | Service worker (offline shell). Bump `CACHE` after changing a cached asset. |
 | `icons/` | Generated PNG icons. |
+| `widget/` | Scriptable home-screen widget (`thread-widget.js`) and its setup guide. |
