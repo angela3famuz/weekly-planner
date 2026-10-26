@@ -9,6 +9,11 @@ Single file (`index.html`), no build step, no backend. Everything lives in the b
 `localStorage`. Install it to the home screen (iOS Safari: Share → *Add to Home Screen*) so
 iOS doesn't evict the data after 7 days.
 
+**AI meeting notes are currently switched off** (`AI_NOTES = false` near the top of the script
+in `index.html`). That hides the transcript "Distil with Claude" flow, thread prep, and the
+"You owe" list. Any transcripts and threads you already saved are kept; set it to `true` to
+bring the feature back.
+
 ## Sync across devices
 
 Optional, and off until you turn it on. Without it, Thread is exactly what it was: local,

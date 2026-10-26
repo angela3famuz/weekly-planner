@@ -514,7 +514,7 @@
       <input type="file" id="restoreFile" accept=".json,application/json" hidden>
     </span>
     <span class="foot-flash" id="footFlash"></span>
-    <b>Thread — cockpit.</b> Your present-tense planner. Meetings are threads; the week is where
+    <b>Thread — cockpit.</b> Your present-tense planner. Meetings at a glance; the week is where
     you set intentions. Everything stays on this device — back it up to be safe.
   </div>
 </div>
@@ -589,7 +589,7 @@
 <div class="overlay" id="tidyOverlay">
   <div class="sheet">
     <h3>Tidy up the schedule</h3>
-    <p class="hint">Finds exact duplicate meetings, and one-off meetings that actually repeat — so you can remove the extras and link recurring ones into threads (which unlocks prep carry-over).</p>
+    <p class="hint">Finds exact duplicate meetings, and one-off meetings that actually repeat — so you can remove the extras and link the repeats into a recurring series.</p>
     <div id="tidyBody"></div>
     <div class="sheet-btns">
       <button class="btn ghost" id="tidyClose">Close</button>
@@ -684,6 +684,10 @@
   "use strict";
   var KEY = 'thread-cockpit-v1';
   var ME = 'Angela';
+  // AI meeting notes (distil a transcript via Claude → summary, decisions, "you owe" items).
+  // Off: the distil UI, thread prep and the "You owe" list are hidden. Saved transcripts and
+  // threads are left untouched, so flipping this back to true restores everything.
+  var AI_NOTES = false;
   var NUDGE_LEAD = 15; // minutes before a meeting that the nudge/notification fires
   var notifyOn = false;
   var notified = {};
@@ -841,7 +845,7 @@
   // The thread handed to an upcoming instance: the latest distilled earlier
   // instance of the same series.
   function priorThreadFor(m) {
-    if (!m.seriesId) return null;
+    if (!AI_NOTES || !m.seriesId) return null;
     var best = null;
     state.meetings.forEach(function (n) {
       if (n.seriesId === m.seriesId && n.thread && n.dateIso < m.dateIso && (!best || n.dateIso > best.dateIso)) best = n;
@@ -851,6 +855,7 @@
   // Everything still owed, across every distilled instance.
   function openOwe() {
     var out = [];
+    if (!AI_NOTES) return out;
     state.meetings.forEach(function (m) {
       if (!m.thread) return;
       m.thread.items.forEach(function (it) { if (!it.done) out.push({ item: it, title: m.title }); });
@@ -1143,7 +1148,7 @@
       for (var t = Math.ceil(b.start / 60) * 60; t <= b.end; t += 60) { var ln = el('div', 'hrline'); ln.style.top = ((t - b.start) * PX_PER_MIN) + 'px'; col.appendChild(ln); }
       var dayMs = weekMtgs.filter(function (m) { return m.dateIso === diso; }).sort(function (a, c) { return a.start - c.start || a.dur - c.dur; });
       layoutLanes(dayMs).forEach(function (info) {
-        var m = info.m, sb = el('div', 'sb' + (statusOf(m) === 'past' ? ' past' : '') + (m.thread ? ' threaded' : ''));
+        var m = info.m, sb = el('div', 'sb' + (statusOf(m) === 'past' ? ' past' : '') + (AI_NOTES && m.thread ? ' threaded' : ''));
         sb.style.top = ((m.start - b.start) * PX_PER_MIN) + 'px';
         sb.style.height = Math.max(15, m.dur * PX_PER_MIN - 2) + 'px';
         sb.style.left = 'calc(' + (info.lane * 100 / info.lanes) + '% + 2px)';
@@ -1448,12 +1453,12 @@
     if (tidyScan.dupeCount) {
       var d = el('div', 'tidy-sec');
       d.appendChild(el('div', 'tidy-h', 'Duplicates'));
-      d.appendChild(el('div', 'tidy-note', tidyScan.dupeCount + ' exact duplicate meeting' + (tidyScan.dupeCount > 1 ? 's' : '') + ' will be removed — the copy with the most content (transcript, thread, status) is kept.'));
+      d.appendChild(el('div', 'tidy-note', tidyScan.dupeCount + ' exact duplicate meeting' + (tidyScan.dupeCount > 1 ? 's' : '') + ' will be removed — the copy with the most content (status, notes, category) is kept.'));
       body.appendChild(d);
     }
     if (tidyScan.groups.length) {
       var gsec = el('div', 'tidy-sec');
-      gsec.appendChild(el('div', 'tidy-h', 'Recurring meetings → link into threads'));
+      gsec.appendChild(el('div', 'tidy-h', 'Repeating meetings → link into a series'));
       var list = el('div', 'tidy-list');
       tidyScan.groups.forEach(function (grp) {
         var row = el('label', 'tidy-row');
@@ -1488,7 +1493,7 @@
     state.demo = false; save(); tidyOverlay.classList.remove('open'); render();
     var parts = [];
     if (tidyScan.removeIds.length) parts.push('Removed ' + tidyScan.removeIds.length + ' duplicate' + (tidyScan.removeIds.length > 1 ? 's' : ''));
-    if (linked) parts.push('Linked ' + linked + ' thread' + (linked > 1 ? 's' : ''));
+    if (linked) parts.push('Linked ' + linked + ' series');
     footFlash(parts.join(' · ') || 'Nothing changed.');
   };
 
@@ -1537,7 +1542,7 @@
       var oweItems = pt.thread.items.filter(function (x) { return !x.done; });
       if (oweItems.length) { prepTxt = 'You owe: ' + oweItems.map(function (x) { return x.text; }).join(' · '); prepCls = 'owe'; }
       else if (pt.thread.summary) { prepTxt = 'Last time: ' + pt.thread.summary; }
-    } else if (m.seriesId) { prepTxt = 'First in this thread — nothing carried forward yet.'; }
+    } else if (AI_NOTES && m.seriesId) { prepTxt = 'First in this thread — nothing carried forward yet.'; }
     else { prepTxt = fmtClock(m.start).t + fmtClock(m.start).ap.toLowerCase() + '–' + fmtClock(m.start + m.dur).t + fmtClock(m.start + m.dur).ap.toLowerCase(); }
     n.innerHTML = '';
     var c = el('div', 'count'); c.innerHTML = cnt + (unit ? '<span class="unit">' + unit + '</span>' : '<span class="unit">right now</span>');
@@ -1549,7 +1554,7 @@
     body.appendChild(t);
     if (prepTxt) body.appendChild(el('div', 'nprep ' + prepCls, prepTxt));
     n.appendChild(body);
-    n.onclick = function () { m.expanded = true; save(); render(); var card = document.querySelector('.mtg.next, .mtg.nowm'); if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+    n.onclick = function () { if (AI_NOTES) { m.expanded = true; save(); render(); } var card = document.querySelector('.mtg.next, .mtg.nowm'); if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
   }
 
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -1588,11 +1593,11 @@
 
   function renderMeeting(m, isNext) {
     var st = statusOf(m);
-    var open = m.expanded || isNext;
+    var open = AI_NOTES && (m.expanded || isNext);
     var card = el('div', 'mtg ' + st + (m.status ? ' m-' + m.status : '') + (open ? ' open' : '') + (isNext && st === 'next' ? ' next' : '') + (st === 'now' ? ' nowm' : ''));
     card.dataset.mid = m.id;
     var head = el('div', 'mhead');
-    head.onclick = function () { m.expanded = !open ? true : !m.expanded; if (isNext && m.expanded === false) m.expanded = false; save(); render(); };
+    head.onclick = AI_NOTES ? function () { m.expanded = !open ? true : !m.expanded; if (isNext && m.expanded === false) m.expanded = false; save(); render(); } : function () { openEdit(m); };
 
     var time = el('div', 'mtime');
     var c = fmtClock(m.start);
@@ -1630,8 +1635,8 @@
   function renderSub(m, st) {
     var sub = el('div', 'msub');
     if (st === 'now') { sub.appendChild(el('span', 'thread-cue', '● happening now')); }
-    else if (st === 'past' && !m.thread && (m.seriesId || m.transcript)) { sub.appendChild(el('span', null, 'ended · ')); sub.appendChild(el('span', 'thread-cue', 'distil the transcript')); }
-    else if (st === 'past' && m.thread) {
+    else if (AI_NOTES && st === 'past' && !m.thread && (m.seriesId || m.transcript)) { sub.appendChild(el('span', null, 'ended · ')); sub.appendChild(el('span', 'thread-cue', 'distil the transcript')); }
+    else if (AI_NOTES && st === 'past' && m.thread) {
       var open = m.thread.items.filter(function (x) { return !x.done; }).length;
       sub.appendChild(el('span', null, 'captured'));
       if (open) { sub.appendChild(el('span', null, '·')); sub.appendChild(el('span', 'owe-cue', open + ' to do')); }
@@ -1658,7 +1663,9 @@
 
   function renderDetail(m, st) {
     var d = el('div', 'mdetail pad');
-    if (st === 'past') {
+    if (!AI_NOTES) {
+      d.appendChild(el('div', 'empty-note', (m.seriesId ? cadenceLabel(seriesById(m.seriesId)) : 'One-off meeting') + ' · ' + fmtClock(m.start).t + fmtClock(m.start).ap.toLowerCase() + ' – ' + fmtClock(m.start + m.dur).t + fmtClock(m.start + m.dur).ap.toLowerCase()));
+    } else if (st === 'past') {
       if (m.thread) { appendThreadResult(d, m); }
       else { appendDistill(d, m); }
     } else {
@@ -1731,6 +1738,7 @@
 
   function renderOwe() {
     var sec = document.getElementById('oweSec'); sec.innerHTML = '';
+    sec.hidden = !AI_NOTES; if (!AI_NOTES) return;
     var owe = openOwe();
     var head = el('div', 'sec-head'); head.appendChild(el('span', null, 'You owe')); if (owe.length) head.appendChild(el('span', 'count', String(owe.length)));
     sec.appendChild(head);
@@ -1879,18 +1887,18 @@
     var verb = converting ? 'Makes this' : 'Creates';
     var tail = converting ? ' from this date' : '';
     if (r === 'none') { $('repeatHint').textContent = converting ? 'Stays a single meeting.' : 'A single meeting.'; return; }
-    if (r === 'weekday') { $('repeatHint').textContent = verb + ' a weekday thread — the next ' + (converting ? 9 : 10) + ' weekdays are added' + tail + '.'; return; }
+    if (r === 'weekday') { $('repeatHint').textContent = verb + ' a weekday series — the next ' + (converting ? 9 : 10) + ' weekdays are added' + tail + '.'; return; }
     var n = Math.max(1, parseInt($('fInterval').value, 10) || 1);
     if (r === 'monthly') {
       var everyM = n > 1 ? 'every ' + n + ' months' : 'monthly';
       var patt = $('fMonthMode').selectedOptions[0] ? ' on ' + $('fMonthMode').selectedOptions[0].textContent : '';
-      $('repeatHint').textContent = verb + ' a thread repeating ' + everyM + patt + ' — the next ' + (converting ? 11 : 12) + ' occurrences are added' + tail + ', each able to carry forward.';
+      $('repeatHint').textContent = verb + ' a series repeating ' + everyM + patt + ' — the next ' + (converting ? 11 : 12) + ' occurrences are added' + tail + (AI_NOTES ? ', each able to carry forward' : '') + '.';
       return;
     }
     var every = r === 'weekly' ? (n > 1 ? 'every ' + n + ' weeks' : 'weekly') : (n > 1 ? 'every ' + n + ' days' : 'daily');
     var count = converting ? (r === 'weekly' ? 7 : 9) : (r === 'weekly' ? 8 : 10);
-    var carry = r === 'weekly' ? ', each able to carry forward' : '';
-    $('repeatHint').textContent = verb + ' a thread repeating ' + every + ' — the next ' + count + ' occurrences are added' + tail + carry + '.';
+    var carry = AI_NOTES && r === 'weekly' ? ', each able to carry forward' : '';
+    $('repeatHint').textContent = verb + ' a series repeating ' + every + ' — the next ' + count + ' occurrences are added' + tail + carry + '.';
   }
   $('fRepeat').onchange = updateRepeatUI;
   $('fInterval').oninput = updateRepeatUI;
